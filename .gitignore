@@ -1,0 +1,26 @@
+# Unity generated
+/Library/
+/Temp/
+/Obj/
+/Logs/
+/UserSettings/
+/MemoryCaptures/
+/Recordings/
+
+# IDE
+*.csproj
+*.sln
+*.slnx
+.vscode/
+.idea/
+.utmp/
+
+# Builds
+/Builds/
+*.apk
+*.aab
+*_BurstDebugInformation_DoNotShip/
+
+# OS / crash files
+.DS_Store
+mono_crash.*
