@@ -35,6 +35,7 @@ public static class LevelGenerator
         int kiteCount = settings.colors * PuzzleModel.ChhatSize;
 
         // Keep the hardest solvable layout seen. If none is solvable with this many slots, allow one more.
+        // This always ends: with a slot per kite every layout is solvable (the top-most string is never covered).
         for (int slots = settings.slots; ; slots++)
         {
             LevelDefs.LevelData best = null;

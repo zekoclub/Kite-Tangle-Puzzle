@@ -1,0 +1,48 @@
+{
+  "kites": {
+    "red": {
+      "base": "#E0533D",
+      "light": "#F08672",
+      "dark": "#B8392A"
+    },
+    "magenta": {
+      "base": "#C9509A",
+      "light": "#DE7FB8",
+      "dark": "#9E3A77"
+    },
+    "blue": {
+      "base": "#3D86D9",
+      "light": "#74A9EA",
+      "dark": "#2B64A8"
+    },
+    "yellow": {
+      "base": "#F2B831",
+      "light": "#F8D170",
+      "dark": "#C99018"
+    },
+    "green": {
+      "base": "#3FA66A",
+      "light": "#6CC390",
+      "dark": "#2C7A4C"
+    }
+  },
+  "string": {
+    "edge": "#FBF6EC",
+    "shadow": "rgba(42,26,18,.16)",
+    "shine": "#FFFFFF@55%"
+  },
+  "ui": {
+    "ink": "#2A1A12",
+    "cream": "#FBF1DE",
+    "saffron": "#F2A12E",
+    "saffronShade": "#C77A12",
+    "roof": "#7A4A2E",
+    "roofEdge": "#9C6440",
+    "danger": "#B83A26",
+    "muted": "#6B5444"
+  },
+  "fonts": {
+    "display": "Baloo 2 (Google Fonts, 500–800)",
+    "icons": "Material Symbols Rounded (Google Fonts)"
+  }
+}

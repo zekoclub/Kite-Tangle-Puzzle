@@ -2,7 +2,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-// Creates the Stage 1 game scene. Menu: Kite Tangle > Build Game Scene (also used from batchmode).
+// Creates the game scene (camera, board and UI; everything else is built from code). Menu: Kite Tangle > Build Game Scene (also used from batchmode).
 public static class SceneBuilder
 {
     const string ScenePath = "Assets/Scenes/Game.unity";
@@ -15,12 +15,14 @@ public static class SceneBuilder
         var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
         camGo.transform.position = new Vector3(0f, 0f, -10f);
         var cam = camGo.AddComponent<Camera>();
+        camGo.AddComponent<AudioListener>();
         cam.orthographic = true;
         cam.orthographicSize = 5f;
         cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = new Color(0.55f, 0.82f, 0.98f);
+        cam.backgroundColor = Art.Hex("BFE0F0"); // behind the sky sprite
 
         new GameObject("TangleBoard").AddComponent<TangleBoard>();
+        new GameObject("GameUI").AddComponent<GameUI>();
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };

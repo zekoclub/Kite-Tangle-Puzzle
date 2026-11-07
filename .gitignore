@@ -24,3 +24,8 @@
 # OS / crash files
 .DS_Store
 mono_crash.*
+
+# Logs and signing secrets (never commit the keystore or its passwords)
+build.log
+/tmp/
+/Keys/

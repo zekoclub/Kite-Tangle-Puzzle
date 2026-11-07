@@ -12,7 +12,7 @@ public class PuzzleModel
     readonly int[] colors;
     readonly int[] blockerMask;
     readonly int[] queue;
-    readonly int slotCount;
+    int slotCount;
 
     public int FreedMask { get; private set; }
     public int QueueIndex { get; private set; }
@@ -24,6 +24,7 @@ public class PuzzleModel
 
     public int KiteCount => colors.Length;
     public int QueueLength => queue.Length;
+    public int SlotCount => slotCount;
     public bool Won => QueueIndex >= queue.Length;
     public int ActiveColor => Won ? -1 : queue[QueueIndex];
 
@@ -84,6 +85,9 @@ public class PuzzleModel
             }
         }
     }
+
+    // The +1 slot reward (rewarded ad or booster).
+    public void AddSlot() => slotCount++;
 
     void Dock(int k)
     {
