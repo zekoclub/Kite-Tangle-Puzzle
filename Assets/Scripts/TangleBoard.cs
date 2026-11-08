@@ -376,6 +376,7 @@ public class TangleBoard : MonoBehaviour
         int queueBefore = model.QueueIndex;
         bool toChhat = level.kites[k].colorId == model.ActiveColor;
         model.Free(k);
+        Progress.RecordKiteFreed();
         moves++;
         Sync();
         Sfx.Play(model.QueueIndex > queueBefore ? Sfx.Sound.ChhatDone : toChhat ? Sfx.Sound.Dock : Sfx.Sound.Free);
@@ -394,6 +395,7 @@ public class TangleBoard : MonoBehaviour
     {
         State = GameState.Lost;
         Reason = reason;
+        Progress.RecordLoss();
         Sfx.Play(Sfx.Sound.Lose);
         Changed?.Invoke();
     }

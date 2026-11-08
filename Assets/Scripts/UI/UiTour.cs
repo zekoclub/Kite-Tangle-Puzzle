@@ -97,6 +97,10 @@ public partial class GameUI
         yield return new WaitForSecondsRealtime(2.5f);
         yield return Shot(folder, "14-win");
 
+        ShowHome();
+        ShowStats();
+        yield return Shot(folder, "15-stats");
+
         Debug.Log("[UiTour] done");
         Application.Quit();
     }

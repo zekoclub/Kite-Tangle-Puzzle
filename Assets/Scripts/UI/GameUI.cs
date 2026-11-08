@@ -6,7 +6,7 @@ using UnityEngine.UI;
 using static UIKit;
 
 // All the screens, built from code on one Screen Space Overlay canvas (1080x1920 reference, Expand):
-// Home, Level map, in-game HUD, Win, Lose, Pause, Settings and Shop.
+// Home, Level map, in-game HUD, Win, Lose, Pause, Settings, Shop and Stats.
 // It only reads TangleBoard state and calls its public actions; game rules stay in PuzzleModel.
 public partial class GameUI : MonoBehaviour
 {
@@ -44,7 +44,7 @@ public partial class GameUI : MonoBehaviour
     };
 
     // Screens and popups.
-    RectTransform home, map, hud, win, lose, pause, settings, shop, loading, toast, tutorial;
+    RectTransform home, map, hud, win, lose, pause, settings, shop, stats, loading, toast, tutorial;
     Text tutorialIcon, tutorialTitle, tutorialBody;
     readonly List<RectTransform> popups = new();
     bool busy; // a level is being generated
@@ -53,7 +53,9 @@ public partial class GameUI : MonoBehaviour
     readonly List<Text> coinLabels = new();
     Text playLabel, hudLevel, hudTip, hintBadge, winTitleLevel, winCoins, winRating, loseIcon, loseTitle, loseMessage, toastText;
     Text[] hearts, winStars;
-    Button continueButton, resetButton, privacyButton;
+    Button continueButton, resetButton, privacyButton, cloudButton;
+    Text[] statValues;
+    Text statsFooter;
     RectTransform settingsCard;
     RectTransform mapContent, winReward;
     Confetti winConfetti;
@@ -76,12 +78,15 @@ public partial class GameUI : MonoBehaviour
         BuildPause();
         BuildSettings();
         BuildShop();
+        BuildStats();
         BuildTutorial();
         BuildLoading();
         BuildToast();
 
         Progress.Validate();
         Ads.Init();
+        CloudSave.Init();
+        CloudSave.Changed += RefreshSettings;
         board.Changed += OnBoardChanged;
         board.BonusSlotTapped += OnBonusSlotTapped;
         Progress.Changed += RefreshProgress;
@@ -94,6 +99,7 @@ public partial class GameUI : MonoBehaviour
     void OnDestroy()
     {
         Progress.Changed -= RefreshProgress;
+        CloudSave.Changed -= RefreshSettings;
         if (board != null)
         {
             board.Changed -= OnBoardChanged;
@@ -214,6 +220,8 @@ public partial class GameUI : MonoBehaviour
 
         var settingsButton = MakeButton(home, Style.Secondary, null, Icon.Settings, 70, () => { RefreshSettings(); OpenPopup(settings); });
         settingsButton.GetComponent<RectTransform>().At(new Vector2(0f, 1f), new Vector2(30f, -30f), new Vector2(130f, 130f));
+        var statsButton = MakeButton(home, Style.Secondary, null, Icon.Stats, 70, ShowStats);
+        statsButton.GetComponent<RectTransform>().At(new Vector2(0f, 1f), new Vector2(30f, -180f), new Vector2(130f, 130f));
         CoinPill(home, withPlus: true).At(new Vector2(1f, 1f), new Vector2(-30f, -36f), new Vector2(300f, 116f));
 
         DecorKite(home, 0, new Vector2(0.5f, 0.72f), new Vector2(-280f, 150f), 150f, 0f);
@@ -629,16 +637,38 @@ public partial class GameUI : MonoBehaviour
         IconOf(resetButton).color = Art.Danger;
 
         privacyButton = OnCardButton(card, "Privacy choices", Icon.Info, 44, Ads.ShowPrivacyOptions);
-        privacyButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 220f), new Vector2(620f, 130f), new Vector2(0.5f, 0f));
         privacyButton.gameObject.SetActive(false);
+
+        cloudButton = OnCardButton(card, "Sign in to save", Icon.Cloud, 44, () =>
+        {
+            if (CloudSave.SignedIn) Toast("Your progress is saved to Google Play");
+            else CloudSave.SignIn();
+        });
+        cloudButton.gameObject.SetActive(false);
     }
 
-    // The consent answer arrives after startup, so the Privacy choices button is checked each time Settings opens.
+    // The consent answer and the Google Play sign-in arrive after startup, so the optional rows
+    // (Google Play above Reset, then Privacy choices) are laid out each time Settings opens or sign-in changes.
     void RefreshSettings()
     {
+        float y = 220f;
+        bool cloud = CloudSave.Available;
+        cloudButton.gameObject.SetActive(cloud);
+        if (cloud)
+        {
+            cloudButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, y), new Vector2(620f, 130f), new Vector2(0.5f, 0f));
+            LabelOf(cloudButton).text = CloudSave.SignedIn ? "Saved to Google Play" : "Sign in to save";
+            IconOf(cloudButton).text = CloudSave.SignedIn ? Icon.CloudDone : Icon.Cloud;
+            y += 160f;
+        }
         bool privacy = Ads.PrivacyOptionsRequired;
         privacyButton.gameObject.SetActive(privacy);
-        settingsCard.sizeDelta = new Vector2(settingsCard.sizeDelta.x, privacy ? 940f : 780f);
+        if (privacy)
+        {
+            privacyButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, y), new Vector2(620f, 130f), new Vector2(0.5f, 0f));
+            y += 160f;
+        }
+        settingsCard.sizeDelta = new Vector2(settingsCard.sizeDelta.x, 780f + (y - 220f));
     }
 
     void AddToggles(RectTransform card, float y)
@@ -747,6 +777,55 @@ public partial class GameUI : MonoBehaviour
         Toast($"+{count} hints!");
     }
 
+    // ───────────────────────────── Stats ─────────────────────────────
+
+    static readonly (string icon, string label)[] StatTiles =
+    {
+        (Icon.Map, "Levels done"), (Icon.Star, "Stars"),
+        (Icon.Star, "3-star levels"), (Icon.Play, "Games played"),
+        (Icon.Trophy, "Wins"), (Icon.Check, "Win rate"),
+        (Icon.Streak, "Win streak"), (Icon.Streak, "Best streak"),
+        (Icon.Heart, "Kites freed"), (Icon.Hint, "Hints used"),
+    };
+
+    void BuildStats()
+    {
+        var card = Popup("Stats", 1240f, out stats, 860f);
+        Label(card, "Stats", 96, Art.Ink).rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(500f, 120f), new Vector2(0.5f, 1f));
+        CloseButton(card, () => ClosePopup(stats));
+
+        statValues = new Text[StatTiles.Length];
+        for (int i = 0; i < StatTiles.Length; i++)
+        {
+            var tile = Img(card, "Stat", Art.Load("ui/button_secondary"), OnCard, sliced: true);
+            tile.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(i % 2 == 0 ? -195f : 195f, -200f - i / 2 * 170f), new Vector2(370f, 150f), new Vector2(0.5f, 1f));
+            Glyph(tile.transform, StatTiles[i].icon, 64, Art.SaffronShade).rectTransform.At(new Vector2(0f, 0.5f), new Vector2(20f, 4f), new Vector2(80f, 80f));
+            statValues[i] = Label(tile.transform, "0", 58, Art.Ink, align: TextAnchor.MiddleLeft);
+            statValues[i].rectTransform.At(new Vector2(0f, 0.5f), new Vector2(112f, 22f), new Vector2(240f, 70f), new Vector2(0f, 0.5f));
+            Label(tile.transform, StatTiles[i].label, 30, Art.Muted, Art.Body, TextAnchor.MiddleLeft)
+                .rectTransform.At(new Vector2(0f, 0.5f), new Vector2(112f, -32f), new Vector2(240f, 44f), new Vector2(0f, 0.5f));
+        }
+
+        statsFooter = Label(card, "", 34, Art.Muted, Art.Body);
+        statsFooter.rectTransform.At(new Vector2(0.5f, 0f), new Vector2(0f, 40f), new Vector2(760f, 60f), new Vector2(0.5f, 0f));
+    }
+
+    void ShowStats()
+    {
+        int wins = Progress.Get(Progress.Stat.Wins), losses = Progress.Get(Progress.Stat.Losses);
+        int[] values =
+        {
+            Progress.Level - 1, Progress.TotalStars,
+            Progress.ThreeStarLevels, Progress.Get(Progress.Stat.Played),
+            wins, wins + losses == 0 ? 0 : Mathf.RoundToInt(100f * wins / (wins + losses)),
+            Progress.Get(Progress.Stat.Streak), Progress.Get(Progress.Stat.BestStreak),
+            Progress.Get(Progress.Stat.KitesFreed), Progress.Get(Progress.Stat.HintsUsed),
+        };
+        for (int i = 0; i < values.Length; i++) statValues[i].text = i == 5 ? $"{values[i]}%" : values[i].ToString();
+        statsFooter.text = CloudSave.SignedIn ? "Saved on this phone and to Google Play" : "Saved on this phone";
+        OpenPopup(stats);
+    }
+
     // ───────────────────────────── Loading and toast ─────────────────────────────
 
     void BuildLoading()
@@ -823,6 +902,7 @@ public partial class GameUI : MonoBehaviour
         shownState = TangleBoard.GameState.Playing;
         shownHearts = TangleBoard.MaxHearts;
         board.LoadLevel(task.Result);
+        Progress.RecordStart();
         LevelCache.Prefetch(number + 1); // built while this one is played
         busy = false;
         ShowOnly(hud);
@@ -910,6 +990,12 @@ public partial class GameUI : MonoBehaviour
             IconOf(b).text = Progress.Vibration ? Icon.Vibration : Icon.VibrationOff;
             b.transform.Find("Caption").GetComponent<Text>().text = Progress.Vibration ? "Vibration on" : "Vibration off";
         }
+    }
+
+    // Android: leaving the app sends any progress the cloud save hasn't got yet.
+    void OnApplicationPause(bool paused)
+    {
+        if (paused) CloudSave.Flush();
     }
 
     void Update()

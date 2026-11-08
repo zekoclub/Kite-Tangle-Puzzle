@@ -31,8 +31,69 @@ public static class LogicTests
         RulesOnHandMadeLevel();
         GeneratedLevels(levels);
         BakedLevels(levels);
+        SaveAndStats();
         Debug.Log($"[LogicTests] {checks} checks, {failed} failed");
         return failed == 0;
+    }
+
+    // Progress: stats, the save checksum and the cloud merge. Works on the Editor's own save, so it backs that up
+    // first and puts it back afterwards.
+    static void SaveAndStats()
+    {
+        var keys = new List<string> { "level", "coins", "hints", "sound", "vibration", "sig", "sig_v",
+            "st_played", "st_wins", "st_losses", "st_streak", "st_best_streak", "st_kites", "st_hints" };
+        for (int n = 1; n <= Math.Max(Progress.Level, 3) + 1; n++) { keys.Add("stars_" + n); keys.Add("tut_" + n); }
+        var backup = keys.ToDictionary(k => k, k => PlayerPrefs.HasKey(k) ? (int?)PlayerPrefs.GetInt(k) : null);
+        try
+        {
+            Progress.Reset();
+            Check(Progress.Level == 1 && Progress.Coins == Progress.StartingCoins && Progress.Hints == Progress.StartingHints, "reset: starting level, coins and hints");
+            Check(Enum.GetValues(typeof(Progress.Stat)).Cast<Progress.Stat>().All(st => Progress.Get(st) == 0), "reset: every stat is 0");
+
+            Progress.RecordStart();
+            int reward = Progress.CompleteLevel(1, 3);
+            Check(reward == 25 && Progress.Coins == Progress.StartingCoins + 25, "first win pays 10 + 5 x stars");
+            Check(Progress.Level == 2 && Progress.Stars(1) == 3, "a win unlocks the next level and keeps the stars");
+            Check(Progress.Get(Progress.Stat.Played) == 1 && Progress.Get(Progress.Stat.Wins) == 1, "played and wins counted");
+            Check(Progress.Get(Progress.Stat.Streak) == 1 && Progress.Get(Progress.Stat.BestStreak) == 1, "a win starts a streak");
+            Progress.RecordLoss();
+            Check(Progress.Get(Progress.Stat.Losses) == 1 && Progress.Get(Progress.Stat.Streak) == 0, "a loss is counted and breaks the streak");
+            Check(Progress.Get(Progress.Stat.BestStreak) == 1, "a loss keeps the best streak");
+            Progress.RecordKiteFreed();
+            Progress.RecordKiteFreed();
+            Check(Progress.TryUseHint() && Progress.Get(Progress.Stat.HintsUsed) == 1, "hints used counted");
+            Check(Progress.Get(Progress.Stat.KitesFreed) == 2, "kites freed counted");
+            Check(Progress.TotalStars == 3 && Progress.ThreeStarLevels == 1, "total stars and 3-star levels");
+
+            int coins = Progress.Coins;
+            Progress.Validate();
+            Check(Progress.Coins == coins, "an untouched save passes the checksum");
+            PlayerPrefs.SetInt("st_wins", 999);
+            Progress.Validate();
+            Check(Progress.Coins == Progress.StartingCoins, "a stat edited by hand fails the checksum");
+
+            string cloud = Progress.ToCloudJson();
+            Progress.Reset();
+            Progress.MergeCloud(cloud);
+            Check(Progress.Level == 2 && Progress.Stars(1) == 3 && Progress.Get(Progress.Stat.Wins) == 999,
+                "a fresh install takes the cloud save");
+            Progress.Validate();
+            Check(Progress.Coins == Progress.StartingCoins && Progress.Get(Progress.Stat.Wins) == 999, "a merged save is signed");
+
+            int before = Progress.Coins;
+            Progress.MergeCloud("{\"level\":1,\"coins\":5,\"hints\":0,\"stars\":[1,2],\"stats\":[0,0,0,0,0,0,0]}");
+            Check(Progress.Level == 2 && Progress.Coins == before, "an older cloud save doesn't take the phone back");
+            Check(Progress.Stars(1) == 3 && Progress.Stars(2) == 2, "stars keep the best of both saves");
+            Progress.MergeCloud("not json");
+            Check(Progress.Level == 2, "a broken cloud save is ignored");
+        }
+        finally
+        {
+            foreach (var pair in backup)
+                if (pair.Value.HasValue) PlayerPrefs.SetInt(pair.Key, pair.Value.Value);
+                else PlayerPrefs.DeleteKey(pair.Key);
+            PlayerPrefs.Save();
+        }
     }
 
     static void Check(bool condition, string what)

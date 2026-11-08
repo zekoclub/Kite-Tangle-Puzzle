@@ -32,7 +32,8 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 | `ChhatView.cs` | A rooftop sprite with 3 dashed kite docks; it glides to wherever the board sends it (`MoveTo`/`Snap`). |
 | `TangleBoard.cs` | The game board: layout (from the camera and the safe area), sky/roof background, level loading, slots (incl. the locked "+1 FREE" bonus slot), tap input (Input System `Pointer`, ignoring taps on uGUI buttons), `Sync()`, win/lose. Public state and actions for the UI (see below). |
 | `Art.cs` | Loads sprites/fonts from Resources, the UI palette (`Ink`, `Cream`, `Saffron`…), `DesignPx` (390-px design → world units) and the `Icon` code points. |
-| `Progress.cs` | PlayerPrefs: `level` (highest unlocked), `stars_N`, `coins`, `hints`, `sound`, `vibration`, `tut_N`, `sig`; `Changed` event. |
+| `Progress.cs` | PlayerPrefs: `level` (highest unlocked), `stars_N`, `coins`, `hints`, `sound`, `vibration`, `tut_N`, stats `st_*` (`Progress.Stat`: played, wins, losses, streak, best streak, kites freed, hints used), `sig`, `sig_v`; `Changed` event. `ToCloudJson`/`MergeCloud` for the cloud save (the save that got further keeps level/coins/hints/stats; stars keep the best of both). |
+| `CloudSave.cs` | Google Play Games plugin 2.3.0 (`Assets/GooglePlayGames`, `play-services-games-v2` in `mainTemplate.gradle`) Saved Games file `kite_tangle_progress`. Off (`Available` false) until Window > Google Play Games > Setup > Android setup fills in the App ID. Silent sign-in, read + merge first, then upload on `Progress.Changed` (max every 30 s) and on app pause. Editor/desktop: no-op. |
 | `Sfx.cs` | Placeholder synthesized sounds + vibration. Swap in recorded clips later. |
 | `Ads.cs` | Google AdMob (plugin 11.5.0 in `Assets/GoogleMobileAds`, gradle templates in `Plugins/Android`) with Google's **TEST IDs**. Few ads: rewarded only on request (`ShowRewarded`), an interstitial only via `AfterWin` (from level 10, every 4th win, 3+ min apart), no banners/app-open. UMP consent in `Init`; `PrivacyOptionsRequired`/`ShowPrivacyOptions` for Settings. Editor/desktop: rewarded succeeds at once. Real IDs: App ID in `Assets/GoogleMobileAds/Resources/GoogleMobileAdsSettings.asset`, unit IDs in `Ads.cs`. |
 | `SpriteFactory.cs` | An anti-aliased circle sprite for UI badges. |
@@ -73,7 +74,8 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 - Sky: day, dusk and night take turns every 5 levels (`TangleBoard.SkyFor`). The camera color matches each sky's edge, and the sky/roof re-fit whenever the screen size changes.
 - "How to play" cards: once before levels 1–3 (`Progress.TutorialSeen`), and all rules from the Pause help (i) button.
 - Win screen: confetti (`Confetti` in UIKit), a star rating word (Perfect!/Great!/Well done!), coins counting up (`CountUp`, `Sfx.Sound.Coin`).
-- Saves carry a checksum (`sig`) of level, coins and hints; `Progress.Validate()` at startup resets coins/hints if it doesn't match.
+- Saves carry a checksum (`sig`) of level, coins, hints and stats (`sig_v` = 2; older saves are checked with the old 3-value checksum once and re-signed); `Progress.Validate()` at startup resets coins/hints if it doesn't match.
+- Stats screen: button under Settings on Home (`GameUI.ShowStats`).
 - App icon: `Tools/gen_icon.py` → `Assets/Store/icon.png` + adaptive layers (applied by `Builder`); `Store/play-icon-512.png` for the listing. All Play Store material lives in `Store/` (listing, checklist, privacy policy, app-ads.txt, screenshots; see `Store/README.md`). The Unity splash is off.
 - Wording and theme: "Bo Kata!" (win), chhat = rooftop, charkhi = spool, patang = kite, dor = kite string.
 

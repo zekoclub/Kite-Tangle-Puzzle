@@ -80,4 +80,9 @@ public static class Icon
     public const string Ad = "";
     public const string AddSlot = "";
     public const string Info = "";
+    public const string Stats = "";
+    public const string Trophy = "";
+    public const string Streak = "";
+    public const string Cloud = "";
+    public const string CloudDone = "";
 }

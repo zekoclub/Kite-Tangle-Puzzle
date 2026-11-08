@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder until Play Games is set up. Window > Google Play Games > Setup > Android setup
+     overwrites this file with the real APP_ID from Play Console (Kite Tangle cloud save). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.google.example.games.mainlibproj">
+    <application />
+</manifest>
