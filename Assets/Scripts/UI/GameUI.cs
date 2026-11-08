@@ -15,6 +15,19 @@ public partial class GameUI : MonoBehaviour
     const int HintPack3Price = 60;
     const int HintPack10Price = 180;
     const int FreeCoinsAmount = 50;
+    // Coin prices for everything an ad can also pay for, so nothing needs an ad.
+    const int BonusSlotPrice = 50;
+    const int ContinuePrice = 80;
+    static readonly int[] BoosterPrices = { 40, 80, 60 };      // one Undo / Cut / Freeze when you have none
+    static readonly int[] BoosterPackPrices = { 100, 200, 150 }; // three of each in the shop
+    const int BoosterPack = 3;
+    static readonly string[] BoosterNames = { "Undo", "Cut", "Freeze" };
+    static readonly string[] BoosterIcons = { Icon.Undo, Icon.Cut, Icon.Freeze };
+    static readonly string[] BoosterInfo =
+    {
+        "Take back your last move.", "Cut any patang loose, even a tangled one.", "Tangled taps cost no hearts for the rest of this level.",
+    };
+    static readonly Color Icy = Art.Hex("6FB9E8");
     const int TutorialLevels = 2;          // free idle hints on these levels
     const float TutorialIdleSeconds = 5f;
 
@@ -35,16 +48,29 @@ public partial class GameUI : MonoBehaviour
             "Wrong color for this chhat? The patang waits in a slot. When its chhat arrives, it flies there by itself.\n\n" +
             "If every slot is full, only a patang of the chhat's color fits!"),
         [3] = (Icon.Ad, "+1 FREE slot",
-            "Running out of room? Tap the locked +1 FREE slot to open one more slot for this level.\n\n" +
+            "Running out of room? Tap the locked +1 slot to open one more slot for this level: watch an ad or pay coins.\n\n" +
             "Stuck? Hint shows the next good move."),
+        [5] = (Icon.Undo, "Boosters",
+            "Undo takes back your last move.\n\nCut frees any patang, even a tangled one.\n\n" +
+            "Freeze: tangled taps cost no hearts for the whole level.\n\nRun out? Watch an ad or pay coins."),
+        [LevelGenerator.IceFrom] = (Icon.Freeze, "Iced patang",
+            "Some kites are frozen in ice.\n\nTap an untangled iced kite once to crack the ice, then tap it again to free it."),
+        [LevelGenerator.HiddenFrom] = (Icon.Help, "Hidden colors",
+            "A gray ? patang hides its color.\n\nClear every string lying on its dor and its color shows."),
+        [LevelGenerator.TwinFrom] = (Icon.Info, "Double dor",
+            "Some patangs fly on two strings from two charkhis.\n\nBoth strings must be clear before you can free it."),
+        [LevelGenerator.WindFrom] = (Icon.Wind, "Hawa (wind)",
+            "Kites with a white streamer swap places when the wind turns.\n\nThe wind turns each time a chhat leaves, so plan ahead!"),
         [0] = (Icon.Info, "How to play",
             "Tap a patang whose dor lies on top of every string it crosses. Tangled tap = lose a heart.\n\n" +
             "It flies to the chhat of its color, or waits in a slot. A chhat leaves with 3 kites and the next one takes its kites from the slots.\n\n" +
-            "All slots full and the wrong color = No Space! Use the +1 FREE slot and Hint."),
+            "All slots full and the wrong color = No Space! Use the +1 slot, Hint and the boosters.\n\n" +
+            "Special kites: ice cracks on the first tap, gray ? kites show their color once clear, " +
+            "double-string kites need both strings clear, and streamer kites swap when the wind turns."),
     };
 
     // Screens and popups.
-    RectTransform home, map, hud, win, lose, pause, settings, shop, stats, loading, toast, tutorial;
+    RectTransform home, map, hud, win, lose, pause, settings, shop, stats, loading, toast, tutorial, offer, skins;
     Text tutorialIcon, tutorialTitle, tutorialBody;
     readonly List<RectTransform> popups = new();
     bool busy; // a level is being generated
@@ -53,14 +79,25 @@ public partial class GameUI : MonoBehaviour
     readonly List<Text> coinLabels = new();
     Text playLabel, hudLevel, hudTip, hintBadge, winTitleLevel, winCoins, winRating, loseIcon, loseTitle, loseMessage, toastText;
     Text[] hearts, winStars;
-    Button continueButton, resetButton, privacyButton, cloudButton;
+    Button continueButton, continueCoinsButton, resetButton, privacyButton, cloudButton;
+    Button[] boosterButtons;
+    Text[] boosterBadges;
+    Text offerIcon, offerTitle, offerBody;
+    Button offerAd, offerCoins;
+    int offerPrice;
+    string offerPlacement;
+    System.Action offerGrant;
+    Button removeAdsButton, freeCoinsButton;
+    Text removeAdsSubtitle, freeCoinsSubtitle;
+    Text[] boosterShopSubtitles;
+    Button[] skinButtons;
     Text[] statValues;
     Text statsFooter;
     RectTransform settingsCard;
     RectTransform mapContent, winReward;
     Confetti winConfetti;
     ScrollRect mapScroll;
-    readonly List<Button> soundToggles = new(), vibrationToggles = new();
+    readonly List<Button> soundToggles = new(), vibrationToggles = new(), musicToggles = new();
     TangleBoard.GameState shownState;
     int shownHearts;
     Coroutine toastRoutine, resetRoutine;
@@ -79,16 +116,24 @@ public partial class GameUI : MonoBehaviour
         BuildSettings();
         BuildShop();
         BuildStats();
+        BuildOffer();
+        BuildSkins();
         BuildTutorial();
         BuildLoading();
         BuildToast();
 
         Progress.Validate();
         Ads.Init();
+        Purchases.Init();
+        Purchases.Changed += RefreshShop;
+        Purchases.Message += Toast;
         CloudSave.Init();
         CloudSave.Changed += RefreshSettings;
+        Sfx.RefreshMusic();
         board.Changed += OnBoardChanged;
         board.BonusSlotTapped += OnBonusSlotTapped;
+        board.CutDone += OnCutDone;
+        board.WindTurned += OnWindTurned;
         Progress.Changed += RefreshProgress;
         RefreshProgress();
         ShowHome();
@@ -100,10 +145,14 @@ public partial class GameUI : MonoBehaviour
     {
         Progress.Changed -= RefreshProgress;
         CloudSave.Changed -= RefreshSettings;
+        Purchases.Changed -= RefreshShop;
+        Purchases.Message -= Toast;
         if (board != null)
         {
             board.Changed -= OnBoardChanged;
             board.BonusSlotTapped -= OnBonusSlotTapped;
+            board.CutDone -= OnCutDone;
+            board.WindTurned -= OnWindTurned;
         }
     }
 
@@ -380,15 +429,35 @@ public partial class GameUI : MonoBehaviour
         hudTip = Label(tipChip.transform, "", 32, Art.Ink, Art.Body);
         hudTip.rectTransform.Fill(0, 2, 0, 0);
 
-        var hint = MakeButton(hud, Style.Primary, "Hint", Icon.Hint, 56, OnHint);
-        hint.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(-20f, 44f), new Vector2(330f, 140f), new Vector2(1f, 0f));
-        var badge = Img(hint.transform, "Badge", SpriteFactory.Circle, Art.Danger);
-        badge.rectTransform.At(new Vector2(1f, 1f), new Vector2(14f, 18f), new Vector2(64f, 64f), new Vector2(0.5f, 0.5f));
-        hintBadge = Label(badge.transform, "3", 38, Color.white);
-        hintBadge.rectTransform.Fill(0, 4, 0, 0);
+        // Bottom row: Undo, Cut, Hint, Freeze, Restart.
+        boosterButtons = new Button[BoosterNames.Length];
+        boosterBadges = new Text[BoosterNames.Length];
+        float[] boosterX = { -416f, -208f, 208f };
+        for (int b = 0; b < BoosterNames.Length; b++)
+        {
+            var booster = (Progress.Booster)b;
+            boosterButtons[b] = BarButton(Style.Secondary, BoosterNames[b], BoosterIcons[b], boosterX[b], () => OnBooster(booster), out boosterBadges[b]);
+        }
+        BarButton(Style.Primary, "Hint", Icon.Hint, 0f, OnHint, out hintBadge);
+        BarButton(Style.Secondary, "Restart", Icon.Restart, 416f, () => StartCoroutine(LoadLevel(board.LevelNumber)), out _, withBadge: false);
+    }
 
-        var restart = MakeButton(hud, Style.Secondary, "Restart", Icon.Restart, 56, () => StartCoroutine(LoadLevel(board.LevelNumber)));
-        restart.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(20f, 44f), new Vector2(330f, 140f), new Vector2(0f, 0f));
+    // A square HUD button with the icon on top, a small caption under it and a count badge.
+    Button BarButton(Style style, string caption, string icon, float x, System.Action onClick, out Text badge, bool withBadge = true)
+    {
+        var button = MakeButton(hud, style, null, icon, 64, onClick);
+        button.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(x, 40f), new Vector2(196f, 168f), new Vector2(0.5f, 0f));
+        ((RectTransform)button.transform.Find("Content")).Fill(16, 58, 16, 4);
+        var label = Label(button.transform, caption, 32, style == Style.Primary ? Color.white : Art.Ink, name: "Caption");
+        label.rectTransform.At(new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(190f, 44f), new Vector2(0.5f, 0f));
+        if (style == Style.Primary) label.Shadowed(Art.SaffronShade, 3f);
+        badge = null;
+        if (!withBadge) return button;
+        var dot = Img(button.transform, "Badge", SpriteFactory.Circle, Art.Danger);
+        dot.rectTransform.At(new Vector2(1f, 1f), new Vector2(-30f, -28f), new Vector2(52f, 52f), new Vector2(0.5f, 0.5f));
+        badge = Label(dot.transform, "0", 32, Color.white);
+        badge.rectTransform.Fill(0, 4, 0, 0);
+        return button;
     }
 
     void RefreshHud()
@@ -396,14 +465,20 @@ public partial class GameUI : MonoBehaviour
         if (board.State == TangleBoard.GameState.Idle) return;
         hudLevel.text = $"Level {board.LevelNumber}";
         for (int i = 0; i < hearts.Length; i++)
-            hearts[i].color = i < board.Hearts ? Art.Danger : new Color(Art.Ink.r, Art.Ink.g, Art.Ink.b, 0.18f);
+            hearts[i].color = i >= board.Hearts ? new Color(Art.Ink.r, Art.Ink.g, Art.Ink.b, 0.18f) : board.Frozen ? Icy : Art.Danger;
+        RefreshBoosters();
         if (board.Hearts < shownHearts && board.Hearts >= 0 && board.Hearts < hearts.Length)
             StartCoroutine(Punch(hearts[board.Hearts].rectTransform));
         shownHearts = board.Hearts;
 
         bool warn = true;
-        if (board.Stuck)
-            hudTip.text = board.BonusSlotAvailable ? "Stuck! Try the +1 FREE slot or Restart" : "No way out! Tap Restart";
+        if (board.CutMode)
+        {
+            hudTip.text = "Cut: tap any kite (tap Cut again to cancel)";
+            warn = false;
+        }
+        else if (board.Stuck)
+            hudTip.text = board.BonusSlotAvailable ? "Stuck! Try Undo, the +1 slot or Restart" : "No way out! Undo, Cut or Restart";
         else if (board.LevelNumber > 3 && board.SlotsFree == 0)
             hudTip.text = "Slots full! Only a matching patang fits";
         else if (board.LevelNumber > 3 && board.SlotsFree == 1)
@@ -416,6 +491,12 @@ public partial class GameUI : MonoBehaviour
                 1 => "Tap a kite whose dor lies on top of the others",
                 2 => "Wrong color? The patang waits in a slot",
                 3 => "Tap the +1 FREE slot for an extra slot",
+                5 => "New: Undo, Cut and Freeze boosters below",
+                LevelGenerator.IceFrom => "Iced kite: tap once to crack, again to free",
+                LevelGenerator.HiddenFrom => "Gray kite? Its color shows once its dor is clear",
+                LevelGenerator.TwinFrom => "Double dor: clear both strings to free it",
+                _ when board.Windy => "Hawa! Streamer kites have swapped",
+                LevelGenerator.WindFrom => "Streamer kites swap when a chhat leaves",
                 _ => board.ChhatsLeft == 1 ? "Last chhat!" : $"{board.ChhatsLeft} chhats left",
             };
         }
@@ -426,7 +507,7 @@ public partial class GameUI : MonoBehaviour
     {
         if (board.Stuck)
         {
-            Toast(board.BonusSlotAvailable ? "No winning move. Try the +1 FREE slot" : "No winning move left. Restart!");
+            Toast(board.BonusSlotAvailable ? "No winning move. Try Undo or the +1 slot" : "No winning move left. Undo or Restart!");
             return;
         }
         if (Progress.Hints <= 0)
@@ -439,19 +520,156 @@ public partial class GameUI : MonoBehaviour
         {
             case TangleBoard.HintResult.Shown: Progress.TryUseHint(); break;
             case TangleBoard.HintResult.NoMoves:
-                Toast(board.BonusSlotAvailable ? "No winning move. Try the +1 FREE slot" : "No winning move left. Restart!");
+                Toast(board.BonusSlotAvailable ? "No winning move. Try Undo or the +1 slot" : "No winning move left. Undo or Restart!");
                 break;
         }
     }
 
-    void OnBonusSlotTapped()
-    {
-        Ads.ShowRewarded("bonus_slot", ok =>
+    void OnBonusSlotTapped() =>
+        ShowOffer(Icon.AddSlot, "+1 Slot", "One more waiting slot for this level.", "bonus_slot", BonusSlotPrice, () =>
         {
-            if (!ok) { NoAd(); return; }
             board.UnlockBonusSlot();
             Toast("+1 slot!");
         });
+
+    // ───────────────────────────── Boosters ─────────────────────────────
+
+    void OnBooster(Progress.Booster booster)
+    {
+        if (board.State != TangleBoard.GameState.Playing) return;
+        int b = (int)booster;
+        switch (booster)
+        {
+            case Progress.Booster.Undo when !board.CanUndo:
+                Toast("Nothing to undo yet");
+                return;
+            case Progress.Booster.Cut when board.CutMode:
+                board.CutMode = false; // cancel: the booster isn't used
+                RefreshHud();
+                return;
+            case Progress.Booster.Freeze when board.Frozen:
+                Toast("Hearts are already frozen");
+                return;
+        }
+        if (Progress.Boosters(booster) > 0) { ApplyBooster(booster); return; }
+        ShowOffer(BoosterIcons[b], BoosterNames[b], BoosterInfo[b], "booster_" + BoosterNames[b].ToLowerInvariant(), BoosterPrices[b], () =>
+        {
+            Progress.AddBoosters(booster, 1);
+            ApplyBooster(booster);
+        });
+    }
+
+    void ApplyBooster(Progress.Booster booster)
+    {
+        switch (booster)
+        {
+            case Progress.Booster.Undo:
+                if (board.Undo()) Progress.TryUseBooster(booster);
+                break;
+            case Progress.Booster.Cut:
+                board.CutMode = true; // used up when a kite is actually cut (OnCutDone)
+                Toast("Tap any kite to cut its string");
+                RefreshHud();
+                break;
+            case Progress.Booster.Freeze:
+                board.Freeze();
+                Progress.TryUseBooster(booster);
+                Toast("Hearts frozen for this level!");
+                break;
+        }
+    }
+
+    void OnCutDone(bool cut)
+    {
+        if (cut) Progress.TryUseBooster(Progress.Booster.Cut);
+        else Toast("No room for that kite. Pick another");
+    }
+
+    void OnWindTurned() => Toast("Hawa! The wind swapped the streamer kites");
+
+    // Counts on the booster buttons; buttons that can't do anything right now are faded.
+    void RefreshBoosters()
+    {
+        if (boosterButtons == null) return;
+        for (int b = 0; b < boosterButtons.Length; b++)
+        {
+            var booster = (Progress.Booster)b;
+            int count = Progress.Boosters(booster);
+            boosterBadges[b].text = count > 0 ? count.ToString() : "+";
+            bool usable = board.State == TangleBoard.GameState.Playing && booster switch
+            {
+                Progress.Booster.Undo => board.CanUndo,
+                Progress.Booster.Freeze => !board.Frozen,
+                _ => true,
+            };
+            bool active = booster == Progress.Booster.Cut && board.CutMode || booster == Progress.Booster.Freeze && board.Frozen;
+            boosterButtons[b].GetComponent<Image>().color = active ? (booster == Progress.Booster.Freeze ? Icy : Art.Saffron)
+                : usable ? Color.white : new Color(1f, 1f, 1f, 0.55f);
+        }
+    }
+
+    // ───────────────────────────── Ads or coins ─────────────────────────────
+
+    // Everything an ad can pay for can also be paid with coins. With Remove Ads the "ad" choice is free
+    // (Progress.FreeRewardsPerDay times a day), then a normal optional ad.
+    void Rewarded(string placement, System.Action grant)
+    {
+        if (Progress.NoAds && Progress.TryClaimFreeReward()) { grant(); return; }
+        Ads.ShowRewarded(placement, ok => { if (ok) grant(); else NoAd(); });
+    }
+
+    static bool FreeReward => Progress.NoAds && Progress.FreeRewardsLeft > 0;
+    static string RewardLabel => FreeReward ? "Free" : "Watch ad";
+    static string RewardIcon => FreeReward ? Icon.Gift : Icon.Ad;
+    static bool RewardReady => FreeReward || Ads.RewardedReady;
+
+    void BuildOffer()
+    {
+        var card = Popup("Offer", 1000f, out offer);
+        CloseButton(card, () => ClosePopup(offer));
+        offerIcon = Glyph(card, Icon.AddSlot, 150, Art.SaffronShade);
+        offerIcon.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(180f, 180f), new Vector2(0.5f, 1f));
+        offerTitle = Label(card, "", 90, Art.Ink);
+        offerTitle.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -235f), new Vector2(680f, 120f), new Vector2(0.5f, 1f));
+        offerBody = Label(card, "", 40, Art.Muted, Art.Body);
+        offerBody.horizontalOverflow = HorizontalWrapMode.Wrap;
+        offerBody.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -360f), new Vector2(640f, 130f), new Vector2(0.5f, 1f));
+
+        offerAd = MakeButton(card, Style.Primary, "Watch ad", Icon.Ad, 60, () => Rewarded(offerPlacement, () => { ClosePopup(offer); offerGrant?.Invoke(); }));
+        offerAd.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 230f), new Vector2(620f, 160f), new Vector2(0.5f, 0f));
+        offerCoins = OnCardButton(card, "50", null, 60, () =>
+        {
+            if (!Progress.TrySpendCoins(offerPrice)) { Sfx.Play(Sfx.Sound.Wrong); Toast("Not enough coins"); return; }
+            Sfx.Play(Sfx.Sound.Coin);
+            ClosePopup(offer);
+            offerGrant?.Invoke();
+        });
+        AddCoinIcon(offerCoins);
+        offerCoins.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 60f), new Vector2(620f, 144f), new Vector2(0.5f, 0f));
+    }
+
+    // A coin picture in front of a button's label.
+    static void AddCoinIcon(Button button)
+    {
+        var content = button.transform.Find("Content");
+        var pic = Img(content, "Image", Art.Load("ui/coin"), Color.white);
+        pic.transform.SetAsFirstSibling();
+        var le = pic.gameObject.AddComponent<LayoutElement>();
+        le.preferredWidth = le.preferredHeight = 66f;
+    }
+
+    void ShowOffer(string icon, string title, string body, string placement, int price, System.Action grant)
+    {
+        offerIcon.text = icon;
+        offerTitle.text = title;
+        offerBody.text = body;
+        offerPlacement = placement;
+        offerPrice = price;
+        offerGrant = grant;
+        LabelOf(offerAd).text = RewardLabel;
+        IconOf(offerAd).text = RewardIcon;
+        LabelOf(offerCoins).text = price.ToString();
+        OpenPopup(offer);
     }
 
     // ───────────────────────────── Win ─────────────────────────────
@@ -563,7 +781,7 @@ public partial class GameUI : MonoBehaviour
 
     void BuildLose()
     {
-        var card = Popup("Lose", 1000f, out lose);
+        var card = Popup("Lose", 1180f, out lose);
         loseIcon = Glyph(card, Icon.HeartBroken, 170, Art.Danger);
         loseIcon.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(200f, 200f), new Vector2(0.5f, 1f));
         loseTitle = Label(card, "Out of Hearts", 96, Art.Ink);
@@ -572,8 +790,11 @@ public partial class GameUI : MonoBehaviour
         loseMessage.horizontalOverflow = HorizontalWrapMode.Wrap;
         loseMessage.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -370f), new Vector2(640f, 130f), new Vector2(0.5f, 1f));
 
-        continueButton = MakeButton(card, Style.Primary, "+1 Slot", Icon.Ad, 60, OnContinue);
-        continueButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 230f), new Vector2(620f, 160f), new Vector2(0.5f, 0f));
+        continueButton = MakeButton(card, Style.Primary, "+1 Slot", Icon.Ad, 56, OnContinue);
+        continueButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 400f), new Vector2(620f, 150f), new Vector2(0.5f, 0f));
+        continueCoinsButton = OnCardButton(card, "80", null, 56, OnContinueCoins);
+        AddCoinIcon(continueCoinsButton);
+        continueCoinsButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 236f), new Vector2(620f, 144f), new Vector2(0.5f, 0f));
 
         var homeButton = OnCardButton(card, null, Icon.Home, 70, ShowHome);
         homeButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(-238f, 60f), new Vector2(144f, 144f), new Vector2(0.5f, 0f));
@@ -590,18 +811,25 @@ public partial class GameUI : MonoBehaviour
             ? "Every slot is full and that patang doesn't match the chhat."
             : "You tapped a patang whose dor was still tangled. Out of hearts!";
         continueButton.gameObject.SetActive(!board.UsedContinue);
-        LabelOf(continueButton).text = noSpace ? "+1 Slot" : "Refill Hearts";
+        continueCoinsButton.gameObject.SetActive(!board.UsedContinue);
+        LabelOf(continueButton).text = (noSpace ? "+1 Slot" : "Refill Hearts") + (FreeReward ? ": Free" : "");
+        IconOf(continueButton).text = RewardIcon;
+        LabelOf(continueCoinsButton).text = $"{ContinuePrice}  " + (noSpace ? "+1 Slot" : "Refill");
         OpenPopup(lose);
     }
 
-    void OnContinue()
+    void OnContinue() => Rewarded("continue", () =>
     {
-        Ads.ShowRewarded("continue", ok =>
-        {
-            if (!ok) { NoAd(); return; }
-            ClosePopup(lose);
-            board.Continue();
-        });
+        ClosePopup(lose);
+        board.Continue();
+    });
+
+    void OnContinueCoins()
+    {
+        if (!Progress.TrySpendCoins(ContinuePrice)) { Sfx.Play(Sfx.Sound.Wrong); Toast("Not enough coins"); return; }
+        Sfx.Play(Sfx.Sound.Coin);
+        ClosePopup(lose);
+        board.Continue();
     }
 
     // ───────────────────────────── Pause, Settings, Shop ─────────────────────────────
@@ -674,10 +902,13 @@ public partial class GameUI : MonoBehaviour
     void AddToggles(RectTransform card, float y)
     {
         var sound = ToggleButton(card, () => { Progress.Sound = !Progress.Sound; });
-        sound.GetComponent<RectTransform>().At(new Vector2(0.5f, 1f), new Vector2(-130f, y), new Vector2(200f, 170f), new Vector2(0.5f, 1f));
+        sound.GetComponent<RectTransform>().At(new Vector2(0.5f, 1f), new Vector2(-240f, y), new Vector2(200f, 170f), new Vector2(0.5f, 1f));
         soundToggles.Add(sound);
+        var music = ToggleButton(card, () => { Progress.Music = !Progress.Music; Sfx.RefreshMusic(); });
+        music.GetComponent<RectTransform>().At(new Vector2(0.5f, 1f), new Vector2(0f, y), new Vector2(200f, 170f), new Vector2(0.5f, 1f));
+        musicToggles.Add(music);
         var vibration = ToggleButton(card, () => { Progress.Vibration = !Progress.Vibration; if (Progress.Vibration) Sfx.Buzz(); });
-        vibration.GetComponent<RectTransform>().At(new Vector2(0.5f, 1f), new Vector2(130f, y), new Vector2(200f, 170f), new Vector2(0.5f, 1f));
+        vibration.GetComponent<RectTransform>().At(new Vector2(0.5f, 1f), new Vector2(240f, y), new Vector2(200f, 170f), new Vector2(0.5f, 1f));
         vibrationToggles.Add(vibration);
     }
 
@@ -706,36 +937,145 @@ public partial class GameUI : MonoBehaviour
         resetRoutine = null;
     }
 
+    // A scrolling list: Remove Ads, Free Coins, hint packs, booster packs, Kite Skins.
     void BuildShop()
     {
-        var card = Popup("Shop", 1180f, out shop, 800f);
+        var card = Popup("Shop", 1580f, out shop, 820f);
         Label(card, "Shop", 96, Art.Ink).rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(500f, 120f), new Vector2(0.5f, 1f));
         CloseButton(card, () => ClosePopup(shop));
         CoinPill(card, withPlus: false).At(new Vector2(0.5f, 1f), new Vector2(0f, -180f), new Vector2(300f, 110f), new Vector2(0.5f, 1f));
 
-        ShopRow(card, -320f, Icon.Hint, "3 Hints", "Find the next move", $"{HintPack3Price}", () => BuyHints(3, HintPack3Price));
-        ShopRow(card, -520f, Icon.Hint, "10 Hints", "Best value", $"{HintPack10Price}", () => BuyHints(10, HintPack10Price));
-        ShopRow(card, -720f, Icon.Ad, "Free Coins", $"Watch an ad for +{FreeCoinsAmount}", "Free", () =>
-            Ads.ShowRewarded("free_coins", ok => { if (ok) { Progress.AddCoins(FreeCoinsAmount); Toast($"+{FreeCoinsAmount} coins!"); } else NoAd(); }));
-        ShopRow(card, -920f, Icon.Star, "Kite Skins", "Coming soon", null, null);
+        var viewport = Node("Viewport", card).Fill(20, 30, 20, 315);
+        viewport.gameObject.AddComponent<RectMask2D>();
+        Img(viewport, "HitArea", null, Color.clear, raycast: true).rectTransform.Fill(); // lets drags scroll
+        var list = Node("List", viewport);
+        list.anchorMin = new Vector2(0f, 1f);
+        list.anchorMax = new Vector2(1f, 1f);
+        list.pivot = new Vector2(0.5f, 1f);
+        list.sizeDelta = Vector2.zero;
+        var column = list.gameObject.AddComponent<VerticalLayoutGroup>();
+        column.spacing = 18f;
+        column.padding = new RectOffset(0, 0, 4, 4);
+        column.childAlignment = TextAnchor.UpperCenter;
+        column.childControlWidth = column.childControlHeight = false;
+        column.childForceExpandWidth = column.childForceExpandHeight = false;
+        list.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        var scroll = viewport.gameObject.AddComponent<ScrollRect>();
+        scroll.content = list;
+        scroll.viewport = viewport;
+        scroll.horizontal = false;
+        scroll.scrollSensitivity = 40f;
+
+        removeAdsButton = ShopRow(list, Icon.NoAds, "Remove Ads", "No ads between levels", "Buy", null, false,
+            Purchases.BuyRemoveAds, out removeAdsSubtitle);
+        freeCoinsButton = ShopRow(list, Icon.Ad, "Free Coins", $"Watch an ad for +{FreeCoinsAmount}", "Free", Icon.Ad, false,
+            () => Rewarded("free_coins", () => { Progress.AddCoins(FreeCoinsAmount); Sfx.Play(Sfx.Sound.Coin); Toast($"+{FreeCoinsAmount} coins!"); }),
+            out freeCoinsSubtitle);
+        ShopRow(list, Icon.Hint, "3 Hints", "Find the next move", $"{HintPack3Price}", null, true, () => BuyHints(3, HintPack3Price), out _);
+        ShopRow(list, Icon.Hint, "10 Hints", "Best value", $"{HintPack10Price}", null, true, () => BuyHints(10, HintPack10Price), out _);
+        boosterShopSubtitles = new Text[BoosterNames.Length];
+        for (int b = 0; b < BoosterNames.Length; b++)
+        {
+            var booster = (Progress.Booster)b;
+            int price = BoosterPackPrices[b];
+            ShopRow(list, BoosterIcons[b], $"{BoosterPack} {BoosterNames[b]}", "", $"{price}", null, true, () =>
+            {
+                if (!Progress.TrySpendCoins(price)) { Sfx.Play(Sfx.Sound.Wrong); Toast("Not enough coins"); return; }
+                Progress.AddBoosters(booster, BoosterPack);
+                Sfx.Play(Sfx.Sound.ChhatDone);
+                Toast($"+{BoosterPack} {BoosterNames[(int)booster]}!");
+            }, out boosterShopSubtitles[b]);
+        }
+        ShopRow(list, Icon.Palette, "Kite Skins", "Patterns for your patang", "Open", null, false, ShowSkins, out _);
     }
 
-    void ShopRow(RectTransform card, float y, string icon, string title, string subtitle, string price, System.Action buy)
+    Button ShopRow(Transform list, string icon, string title, string subtitle, string price, string buttonIcon, bool coins,
+        System.Action buy, out Text subtitleLabel)
     {
-        var row = Img(card, "Row", Art.Load("ui/button_secondary"), OnCard, sliced: true);
-        row.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, y), new Vector2(720f, 180f), new Vector2(0.5f, 1f));
-        Glyph(row.transform, icon, 90, price == null ? Art.Muted : Art.SaffronShade)
-            .rectTransform.At(new Vector2(0f, 0.5f), new Vector2(30f, 6f), new Vector2(110f, 110f));
-        Label(row.transform, title, 54, price == null ? Art.Muted : Art.Ink, align: TextAnchor.MiddleLeft)
-            .rectTransform.At(new Vector2(0f, 0.5f), new Vector2(160f, 26f), new Vector2(330f, 70f), new Vector2(0f, 0.5f));
-        Label(row.transform, subtitle, 32, Art.Muted, Art.Body, TextAnchor.MiddleLeft)
-            .rectTransform.At(new Vector2(0f, 0.5f), new Vector2(160f, -30f), new Vector2(330f, 50f), new Vector2(0f, 0.5f));
-        if (price == null) return;
+        var row = Img(list, "Row", Art.Load("ui/button_secondary"), OnCard, sliced: true);
+        row.rectTransform.sizeDelta = new Vector2(740f, 180f);
+        Glyph(row.transform, icon, 90, Art.SaffronShade).rectTransform.At(new Vector2(0f, 0.5f), new Vector2(28f, 6f), new Vector2(110f, 110f));
+        Label(row.transform, title, 52, Art.Ink, align: TextAnchor.MiddleLeft)
+            .rectTransform.At(new Vector2(0f, 0.5f), new Vector2(156f, 26f), new Vector2(340f, 70f), new Vector2(0f, 0.5f));
+        subtitleLabel = Label(row.transform, subtitle, 30, Art.Muted, Art.Body, TextAnchor.MiddleLeft);
+        subtitleLabel.rectTransform.At(new Vector2(0f, 0.5f), new Vector2(156f, -30f), new Vector2(340f, 50f), new Vector2(0f, 0.5f));
+        var button = MakeButton(row.transform, Style.Primary, price, buttonIcon, 46, buy, coins ? Art.Load("ui/coin") : null);
+        button.GetComponent<RectTransform>().At(new Vector2(1f, 0.5f), new Vector2(-22f, 4f), new Vector2(220f, 120f));
+        return button;
+    }
 
-        bool coins = price != "Free";
-        var button = MakeButton(row.transform, Style.Primary, price, coins ? null : Icon.Ad, 50, buy,
-            coins ? Art.Load("ui/coin") : null);
-        button.GetComponent<RectTransform>().At(new Vector2(1f, 0.5f), new Vector2(-24f, 4f), new Vector2(210f, 120f));
+    // Prices, owned state and counts change while the game runs, so the shop is refreshed each time it opens.
+    void RefreshShop()
+    {
+        if (removeAdsButton == null) return;
+        bool owned = Progress.NoAds;
+        LabelOf(removeAdsButton).text = owned ? "Owned" : Purchases.RemoveAdsPrice ?? "Buy";
+        removeAdsButton.interactable = !owned;
+        removeAdsSubtitle.text = owned ? $"Ads off. {Progress.FreeRewardsLeft} free gifts today" : "No ads between levels";
+        LabelOf(freeCoinsButton).text = "Free";
+        IconOf(freeCoinsButton).text = RewardIcon;
+        freeCoinsSubtitle.text = FreeReward ? $"+{FreeCoinsAmount} coins, no ad" : $"Watch an ad for +{FreeCoinsAmount}";
+        for (int b = 0; b < boosterShopSubtitles.Length; b++)
+            boosterShopSubtitles[b].text = $"You have {Progress.Boosters((Progress.Booster)b)}";
+    }
+
+    // ───────────────────────────── Kite skins ─────────────────────────────
+
+    void BuildSkins()
+    {
+        var card = Popup("Skins", 1460f, out skins, 860f);
+        Label(card, "Kite Skins", 90, Art.Ink).rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(600f, 120f), new Vector2(0.5f, 1f));
+        CloseButton(card, () => ClosePopup(skins));
+        skinButtons = new Button[Art.SkinFiles.Length];
+        for (int i = 0; i < Art.SkinFiles.Length; i++)
+        {
+            int skin = i;
+            var tile = Img(card, "Skin", Art.Load("ui/button_secondary"), OnCard, sliced: true);
+            Vector2 at = i == Art.SkinFiles.Length - 1 && i % 2 == 0 ? new Vector2(0f, -190f - i / 2 * 410f)
+                : new Vector2(i % 2 == 0 ? -200f : 200f, -190f - i / 2 * 410f);
+            tile.rectTransform.At(new Vector2(0.5f, 1f), at, new Vector2(380f, 390f), new Vector2(0.5f, 1f));
+            int color = (i + 1) % LevelDefs.ColorNames.Length;
+            var kite = Img(tile.transform, "Kite", Art.KiteSprite(color), Color.white);
+            kite.preserveAspect = true;
+            kite.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -20f), new Vector2(120f, 168f), new Vector2(0.5f, 1f));
+            if (Art.SkinSprite(i) != null)
+            {
+                var pattern = Img(kite.transform, "Pattern", Art.SkinSprite(i), Color.white);
+                pattern.preserveAspect = true;
+                pattern.rectTransform.Fill();
+            }
+            kite.gameObject.AddComponent<Bob>().phase = i * 1.3f;
+            Label(tile.transform, Art.SkinNames[i], 44, Art.Ink)
+                .rectTransform.At(new Vector2(0.5f, 0f), new Vector2(0f, 120f), new Vector2(360f, 60f), new Vector2(0.5f, 0f));
+            skinButtons[i] = MakeButton(tile.transform, Style.Primary, "Use", null, 42, () => OnSkin(skin), Art.Load("ui/coin"));
+            skinButtons[i].GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, 18f), new Vector2(300f, 100f), new Vector2(0.5f, 0f));
+        }
+    }
+
+    void ShowSkins()
+    {
+        RefreshSkins();
+        OpenPopup(skins);
+    }
+
+    void RefreshSkins()
+    {
+        for (int i = 0; i < skinButtons.Length; i++)
+        {
+            bool owned = Progress.OwnsSkin(i);
+            LabelOf(skinButtons[i]).text = !owned ? Art.SkinPrices[i].ToString() : Progress.Skin == i ? "In use" : "Use";
+            skinButtons[i].transform.Find("Content/Image").gameObject.SetActive(!owned);
+            skinButtons[i].interactable = !(owned && Progress.Skin == i);
+        }
+    }
+
+    void OnSkin(int skin)
+    {
+        if (Progress.OwnsSkin(skin)) Progress.UseSkin(skin);
+        else if (Progress.TryBuySkin(skin, Art.SkinPrices[skin])) Sfx.Play(Sfx.Sound.Purchase);
+        else { Sfx.Play(Sfx.Sound.Wrong); Toast("Not enough coins"); return; }
+        Toast($"{Art.SkinNames[skin]} on! Your kites wear it from the next level");
+        RefreshSkins();
     }
 
     void BuildTutorial()
@@ -762,7 +1102,7 @@ public partial class GameUI : MonoBehaviour
     }
 
     // A rewarded ad that wasn't loaded yet (or was closed early) gives nothing.
-    void NoAd() => Toast("No ad right now. Try again in a moment");
+    void NoAd() => Toast(Ads.TestNoFill ? "No ad (ads off for testing). Use coins" : "No ad right now. Use coins or try again");
 
     void BuyHints(int count, int price)
     {
@@ -786,11 +1126,12 @@ public partial class GameUI : MonoBehaviour
         (Icon.Trophy, "Wins"), (Icon.Check, "Win rate"),
         (Icon.Streak, "Win streak"), (Icon.Streak, "Best streak"),
         (Icon.Heart, "Kites freed"), (Icon.Hint, "Hints used"),
+        (Icon.Undo, "Boosters used"), (Icon.Palette, "Skins owned"),
     };
 
     void BuildStats()
     {
-        var card = Popup("Stats", 1240f, out stats, 860f);
+        var card = Popup("Stats", 1410f, out stats, 860f);
         Label(card, "Stats", 96, Art.Ink).rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -50f), new Vector2(500f, 120f), new Vector2(0.5f, 1f));
         CloseButton(card, () => ClosePopup(stats));
 
@@ -820,10 +1161,18 @@ public partial class GameUI : MonoBehaviour
             wins, wins + losses == 0 ? 0 : Mathf.RoundToInt(100f * wins / (wins + losses)),
             Progress.Get(Progress.Stat.Streak), Progress.Get(Progress.Stat.BestStreak),
             Progress.Get(Progress.Stat.KitesFreed), Progress.Get(Progress.Stat.HintsUsed),
+            Progress.Get(Progress.Stat.BoostersUsed), SkinsOwned(),
         };
         for (int i = 0; i < values.Length; i++) statValues[i].text = i == 5 ? $"{values[i]}%" : values[i].ToString();
         statsFooter.text = CloudSave.SignedIn ? "Saved on this phone and to Google Play" : "Saved on this phone";
         OpenPopup(stats);
+    }
+
+    static int SkinsOwned()
+    {
+        int count = 0;
+        for (int i = 0; i < Art.SkinFiles.Length; i++) if (Progress.OwnsSkin(i)) count++;
+        return count;
     }
 
     // ───────────────────────────── Loading and toast ─────────────────────────────
@@ -941,6 +1290,7 @@ public partial class GameUI : MonoBehaviour
     void OpenPopup(RectTransform popup)
     {
         if (popups.Contains(popup)) return;
+        if (popup == shop) RefreshShop();
         popups.Add(popup);
         popup.SetAsLastSibling();
         popup.gameObject.SetActive(true);
@@ -975,6 +1325,8 @@ public partial class GameUI : MonoBehaviour
         foreach (var label in coinLabels) label.text = Progress.Coins.ToString();
         if (playLabel != null) playLabel.text = $"Level {Progress.Level}";
         if (hintBadge != null) hintBadge.text = Progress.Hints > 0 ? Progress.Hints.ToString() : "+";
+        if (board != null && hud != null && hud.gameObject.activeSelf) RefreshBoosters();
+        if (popups.Contains(shop)) RefreshShop();
         RefreshToggles();
     }
 
@@ -984,6 +1336,11 @@ public partial class GameUI : MonoBehaviour
         {
             IconOf(b).text = Progress.Sound ? Icon.SoundOn : Icon.SoundOff;
             b.transform.Find("Caption").GetComponent<Text>().text = Progress.Sound ? "Sound on" : "Sound off";
+        }
+        foreach (var b in musicToggles)
+        {
+            IconOf(b).text = Progress.Music ? Icon.Music : Icon.MusicOff;
+            b.transform.Find("Caption").GetComponent<Text>().text = Progress.Music ? "Music on" : "Music off";
         }
         foreach (var b in vibrationToggles)
         {
@@ -1004,6 +1361,15 @@ public partial class GameUI : MonoBehaviour
         if (board.State == TangleBoard.GameState.Playing && board.LevelNumber <= TutorialLevels && !board.InputBlocked
             && !board.Stuck && !board.HintActive && board.IdleTime > TutorialIdleSeconds)
             board.ShowHint();
+
+        // Ad buttons fade while no ad is loaded (tapping still says so); the coin choice always works.
+        if (popups.Count > 0)
+        {
+            var faded = new Color(1f, 1f, 1f, RewardReady ? 1f : 0.5f);
+            offerAd.GetComponent<Image>().color = faded;
+            continueButton.GetComponent<Image>().color = faded;
+            freeCoinsButton.GetComponent<Image>().color = faded;
+        }
 
         if (!BackPressed() || busy) return;
         if (popups.Count > 0)

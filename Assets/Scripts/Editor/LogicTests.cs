@@ -29,7 +29,9 @@ public static class LogicTests
     {
         checks = failed = 0;
         RulesOnHandMadeLevel();
+        SpecialKites();
         GeneratedLevels(levels);
+        GeneratedSpecials();
         BakedLevels(levels);
         SaveAndStats();
         Debug.Log($"[LogicTests] {checks} checks, {failed} failed");
@@ -40,8 +42,9 @@ public static class LogicTests
     // first and puts it back afterwards.
     static void SaveAndStats()
     {
-        var keys = new List<string> { "level", "coins", "hints", "sound", "vibration", "sig", "sig_v",
-            "st_played", "st_wins", "st_losses", "st_streak", "st_best_streak", "st_kites", "st_hints" };
+        var keys = new List<string> { "level", "coins", "hints", "sound", "vibration", "music", "sig", "sig_v",
+            "st_played", "st_wins", "st_losses", "st_streak", "st_best_streak", "st_kites", "st_hints", "st_boosters",
+            "bo_undo", "bo_cut", "bo_freeze", "skin", "skins", "no_ads", "free_day", "free_n" };
         for (int n = 1; n <= Math.Max(Progress.Level, 3) + 1; n++) { keys.Add("stars_" + n); keys.Add("tut_" + n); }
         var backup = keys.ToDictionary(k => k, k => PlayerPrefs.HasKey(k) ? (int?)PlayerPrefs.GetInt(k) : null);
         try
@@ -86,6 +89,55 @@ public static class LogicTests
             Check(Progress.Stars(1) == 3 && Progress.Stars(2) == 2, "stars keep the best of both saves");
             Progress.MergeCloud("not json");
             Check(Progress.Level == 2, "a broken cloud save is ignored");
+
+            // Boosters, skins and Remove Ads.
+            Progress.Reset();
+            Check(Progress.Boosters(Progress.Booster.Undo) == Progress.StartingBoosters, "one of each booster to start");
+            Check(Progress.TryUseBooster(Progress.Booster.Cut) && Progress.Boosters(Progress.Booster.Cut) == 0, "using a booster takes one");
+            Check(!Progress.TryUseBooster(Progress.Booster.Cut), "no booster left: can't use it");
+            Check(Progress.Get(Progress.Stat.BoostersUsed) == 1, "boosters used counted");
+            Progress.AddBoosters(Progress.Booster.Cut, 3);
+            Check(Progress.Boosters(Progress.Booster.Cut) == 3, "booster packs add up");
+            Check(Progress.OwnsSkin(0) && !Progress.OwnsSkin(1), "only the classic skin to start");
+            Check(!Progress.TryBuySkin(4, 10000), "a skin needs enough coins");
+            Progress.AddCoins(1000);
+            int coinsBefore = Progress.Coins;
+            Check(Progress.TryBuySkin(2, 300) && Progress.OwnsSkin(2) && Progress.Skin == 2 && Progress.Coins == coinsBefore - 300,
+                "buying a skin takes its price and puts it on");
+            Progress.UseSkin(3);
+            Check(Progress.Skin == 2, "a skin you don't own can't be used");
+            Check(!Progress.NoAds, "ads are on until Remove Ads is bought");
+            Progress.GrantNoAds();
+            Check(Progress.NoAds && Progress.FreeRewardsLeft == Progress.FreeRewardsPerDay, "Remove Ads: free rewards every day");
+            for (int i = 0; i < Progress.FreeRewardsPerDay; i++) Progress.TryClaimFreeReward();
+            Check(Progress.FreeRewardsLeft == 0 && !Progress.TryClaimFreeReward(), "free rewards stop at the daily limit");
+            Progress.Validate();
+            Check(Progress.NoAds && Progress.OwnsSkin(2) && Progress.Boosters(Progress.Booster.Cut) == 3, "boosters, skins and No Ads are signed");
+            PlayerPrefs.SetInt("bo_undo", 99);
+            Progress.Validate();
+            Check(Progress.Boosters(Progress.Booster.Undo) == Progress.StartingBoosters && !Progress.NoAds, "boosters edited by hand fail the checksum");
+
+            // A save signed by the previous version (v2: level, coins, hints, 7 stats) is accepted and re-signed.
+            Progress.Reset();
+            Progress.AddCoins(55);
+            int v2Coins = Progress.Coins;
+            var v2 = new List<int> { Progress.Level, Progress.Coins, Progress.Hints };
+            for (int i = 0; i < 7; i++) v2.Add(Progress.Get((Progress.Stat)i));
+            PlayerPrefs.SetInt("sig", OldHash(v2.ToArray()));
+            PlayerPrefs.SetInt("sig_v", 2);
+            Progress.Validate();
+            Check(Progress.Coins == v2Coins && PlayerPrefs.GetInt("sig_v") == 3, "an older save is upgraded, not reset");
+
+            Progress.AddCoins(500);
+            Progress.TryBuySkin(2, 300);
+            Progress.AddBoosters(Progress.Booster.Freeze, 4);
+            string withBoosters = Progress.ToCloudJson();
+            Progress.Reset();
+            PlayerPrefs.SetInt("skins", 1);
+            PlayerPrefs.SetInt("skin", 0);
+            Progress.MergeCloud(withBoosters.Replace("\"level\":1", "\"level\":9"));
+            Check(Progress.Level == 9 && Progress.OwnsSkin(2) && Progress.Skin == 2 &&
+                  Progress.Boosters(Progress.Booster.Freeze) == Progress.StartingBoosters + 4, "the cloud save carries boosters and skins");
         }
         finally
         {
@@ -94,6 +146,91 @@ public static class LogicTests
                 else PlayerPrefs.DeleteKey(pair.Key);
             PlayerPrefs.Save();
         }
+    }
+
+    // The save checksum (FNV-1a with the "kite" salt), to build a save signed by an older version.
+    static int OldHash(params int[] values)
+    {
+        uint h = 2166136261u ^ 0x6B697465;
+        foreach (int v in values)
+            for (int b = 0; b < 4; b++) { h ^= (uint)(v >> (b * 8)) & 0xFF; h *= 16777619u; }
+        return (int)h;
+    }
+
+    // Ice, hidden colors, double strings and wind on hand-made levels.
+    static void SpecialKites()
+    {
+        // Ice: kite 1 (on top) is iced. Cracking is a separate step and doesn't change what can be won.
+        var iced = HandMade(1);
+        iced.ice = 1 << 1;
+        var m = new PuzzleModel(iced);
+        Check(m.IsIced(1) && m.IsUntangled(1), "an iced kite on top is untangled but iced");
+        m.Crack(1);
+        Check(!m.IsIced(1) && !m.IsFreed(1), "the first tap only cracks the ice");
+        Check(PuzzleModel.Solve(new PuzzleModel(iced)) != null, "ice doesn't make a level unsolvable");
+
+        // Hidden: kite 0 lies under kite 1, so its color shows only once kite 1 is gone.
+        var hidden = HandMade(1);
+        hidden.hidden = 1 << 0 | 1 << 1;
+        m = new PuzzleModel(hidden);
+        Check(m.IsHidden(0) && !m.IsHidden(1), "a covered hidden kite is hidden; an uncovered one shows at once");
+        m.Free(1);
+        Check(!m.IsHidden(0), "clearing its string shows the color");
+
+        // Wind turns each time a chhat leaves.
+        var windy = HandMade(1);
+        windy.crossMask = new int[6];
+        windy.crossMask[0] = 1 << 1;
+        windy.crossMask[1] = 1 << 0;
+        windy.wind = new[] { 0, 1 };
+        var w = new PuzzleModel(windy);
+        Check(w.HasWind && !w.Windy && w.LayerOf(0) == 0 && w.LayerOf(1) == 1, "calm before any chhat leaves");
+        w.Free(1); w.Free(0); w.Free(2); // red chhat done -> blue arrives, the wind turns
+        Check(w.QueueIndex == 1 && w.Windy && w.LayerOf(0) == 1 && w.LayerOf(1) == 0, "the wind turns when a chhat leaves");
+
+        // Wind swaps layers: build a level where kites 3 and 4 (blue) cross and swap once red leaves.
+        var swap = HandMade(2);
+        swap.crossMask = new int[6];
+        swap.crossMask[3] = 1 << 4;
+        swap.crossMask[4] = 1 << 3;
+        swap.wind = new[] { 3, 4 };
+        swap.blockerMask = PuzzleModel.BlockersFrom(swap.crossMask, swap.kites.Select(k => k.layer).ToArray()); // 4 on 3
+        m = new PuzzleModel(swap);
+        Check(!m.IsUntangled(3) && m.IsUntangled(4), "calm: kite 4 lies on kite 3");
+        m.Free(1); m.Free(0); m.Free(2);
+        Check(m.Windy && m.IsUntangled(3) && !m.IsUntangled(4), "windy: kite 3 now lies on kite 4");
+        Check(PuzzleModel.Solve(new PuzzleModel(swap)) != null, "a wind level is solvable");
+
+        // Undo support: an older state keeps slots bought since.
+        var undo = new PuzzleModel(HandMade(1));
+        var before = undo.Clone();
+        undo.Free(3);
+        undo.AddSlot();
+        before.KeepSlots(undo.SlotCount);
+        Check(before.SlotCount == 2 && !before.IsFreed(3), "undo puts the state back and keeps the bought slot");
+
+        // Cut: a tangled kite can be freed (the board skips the untangled check).
+        var cut = new PuzzleModel(HandMade(1));
+        cut.Free(0);
+        Check(cut.IsFreed(0) && cut.KiteChhat[0] == 0, "Cut frees a tangled kite onto its chhat");
+    }
+
+    // Levels with special kites: each kind appears from its level, and the levels stay solvable.
+    static void GeneratedSpecials()
+    {
+        foreach (int n in new[] { LevelGenerator.IceFrom, LevelGenerator.HiddenFrom, LevelGenerator.TwinFrom, LevelGenerator.WindFrom, 120 })
+        {
+            var level = LevelGenerator.Generate(n);
+            Check(level.ice != 0, $"L{n}: has iced kites");
+            if (n >= LevelGenerator.HiddenFrom) Check(level.hidden != 0, $"L{n}: has hidden kites");
+            if (n >= LevelGenerator.TwinFrom) Check(level.kites.Any(k => k.twin), $"L{n}: has a double-string kite");
+            if (n >= LevelGenerator.WindFrom) Check(level.wind != null && level.wind.Length >= 2, $"L{n}: has wind");
+            Check(PuzzleModel.Solve(new PuzzleModel(level)) != null, $"L{n}: solvable with special kites");
+            for (int k = 0; k < level.kites.Length; k++)
+                if ((level.hidden & (1 << k)) != 0) Check(level.blockerMask[k] != 0, $"L{n}: hidden kite {k} starts covered");
+        }
+        var plain = LevelGenerator.Generate(LevelGenerator.IceFrom - 1);
+        Check(plain.ice == 0 && plain.hidden == 0 && plain.wind == null && !plain.kites.Any(k => k.twin), "levels before 21 have no special kites");
     }
 
     static void Check(bool condition, string what)
@@ -212,6 +349,8 @@ public static class LogicTests
 
     static bool SameRules(LevelDefs.LevelData a, LevelDefs.LevelData b) =>
         a.slots == b.slots && a.queue.SequenceEqual(b.queue) && a.blockerMask.SequenceEqual(b.blockerMask) &&
+        a.ice == b.ice && a.hidden == b.hidden && (a.wind ?? new int[0]).SequenceEqual(b.wind ?? new int[0]) &&
+        a.kites.Select(k => k.twin).SequenceEqual(b.kites.Select(k => k.twin)) &&
         a.kites.Select(k => (k.colorId, k.layer)).SequenceEqual(b.kites.Select(k => (k.colorId, k.layer))) &&
         a.kites.Zip(b.kites, (x, y) => (x.anchor - y.anchor).sqrMagnitude + (x.spool - y.spool).sqrMagnitude).All(d => d < 1e-8f);
 

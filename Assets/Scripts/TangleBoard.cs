@@ -46,6 +46,18 @@ public class TangleBoard : MonoBehaviour
 
     public event Action Changed;          // hearts, chhats or state changed
     public event Action BonusSlotTapped;  // the player tapped the locked "+1 FREE" slot
+    public event Action<bool> CutDone;    // Cut booster: true = a kite was cut loose, false = it had nowhere to go
+    public event Action WindTurned;       // a chhat left and the wind swapped the wind kites' layers
+
+    // Boosters (GameUI pays for them; the board only applies them).
+    public bool CanUndo => State == GameState.Playing && history.Count > 0;
+    public bool CutMode { get; set; }     // the next tap on a kite cuts it loose, even if it is tangled
+    public bool Frozen { get; private set; } // tangled taps cost no hearts for the rest of this level
+    public bool HasWind => model != null && model.HasWind;
+    public bool Windy => model != null && model.Windy;
+    public bool HasIce => level != null && level.ice != 0;
+    public bool HasHidden => level != null && level.hidden != 0;
+    public bool HasTwins => level != null && Array.Exists(level.kites, k => k.twin);
 
     readonly List<Kite> kites = new();
     readonly List<ChhatView> chhats = new();
@@ -61,6 +73,8 @@ public class TangleBoard : MonoBehaviour
 
     LevelDefs.LevelData level;
     PuzzleModel model;
+    readonly Stack<PuzzleModel> history = new(); // states before each move, for Undo
+    int windKites; // bit k = kite k is in a wind pair
 
     // Background solve of the current state: finds dead ends and makes the hint instant.
     Task<List<int>> solveTask;
@@ -180,18 +194,28 @@ public class TangleBoard : MonoBehaviour
 
         level = data;
         model = new PuzzleModel(level);
+        history.Clear();
         moves = 0;
         hintKite = null;
         lastAction = Time.time;
+        CutMode = false;
+        Frozen = false;
         StartSolve();
 
-        float spoolGap = 0.92f * 2f * fieldHalfW / Mathf.Max(1, level.kites.Length - 1);
+        windKites = 0;
+        if (level.wind != null) foreach (int k in level.wind) windKites |= 1 << k;
+        int spoolCount = level.kites.Length + Array.FindAll(level.kites, k => k.twin).Length;
+        float spoolGap = 0.92f * 2f * fieldHalfW / Mathf.Max(1, spoolCount - 1);
         float spoolWidth = Mathf.Min(26f * Art.DesignPx, spoolGap * 0.95f);
+        var skin = Art.SkinSprite(Progress.Skin);
         for (int i = 0; i < level.kites.Length; i++)
         {
             var kite = new GameObject($"Kite_{i}").AddComponent<Kite>();
             kite.transform.SetParent(levelRoot, false);
-            kite.Init(i, level.kites[i], ToWorld, spoolWidth);
+            kite.Init(i, level.kites[i], ToWorld, spoolWidth, new Kite.Look
+            {
+                iced = model.IsIced(i), hidden = model.IsHidden(i), wind = (windKites & (1 << i)) != 0, skin = skin,
+            });
             kites.Add(kite);
         }
 
@@ -350,17 +374,49 @@ public class TangleBoard : MonoBehaviour
         var tapped = kites[k];
         lastAction = Time.time;
 
+        if (CutMode)
+        {
+            if (!model.CanPlace(k))
+            {
+                tapped.StartCoroutine(tapped.Shake());
+                Sfx.Play(Sfx.Sound.Wrong);
+                CutDone?.Invoke(false);
+                return;
+            }
+            CutMode = false;
+            Sfx.Play(Sfx.Sound.Cut);
+            FreeKite(k);
+            CutDone?.Invoke(true);
+            return;
+        }
+
         if (!model.IsUntangled(k))
         {
             tapped.StartCoroutine(tapped.Shake());
+            int blockers = model.BlockersOf(k);
             for (int j = 0; j < kites.Count; j++)
-                if ((level.blockerMask[k] & (1 << j)) != 0 && !model.IsFreed(j))
+                if ((blockers & (1 << j)) != 0 && !model.IsFreed(j))
                     kites[j].Flash();
+            Sfx.Buzz();
+            if (Frozen)
+            {
+                Sfx.Play(Sfx.Sound.Freeze); // hearts are frozen: the mistake costs nothing
+                return;
+            }
             Hearts--;
             Sfx.Play(Sfx.Sound.Wrong);
-            Sfx.Buzz();
             if (Hearts <= 0) Lose(LoseReason.OutOfHearts);
             else Changed?.Invoke();
+            return;
+        }
+
+        if (model.IsIced(k))
+        {
+            history.Push(model.Clone());
+            model.Crack(k);
+            tapped.SetIced(false);
+            Sfx.Play(Sfx.Sound.Crack);
+            Changed?.Invoke();
             return;
         }
 
@@ -373,12 +429,20 @@ public class TangleBoard : MonoBehaviour
             return;
         }
 
+        FreeKite(k);
+    }
+
+    void FreeKite(int k)
+    {
+        history.Push(model.Clone());
         int queueBefore = model.QueueIndex;
-        bool toChhat = level.kites[k].colorId == model.ActiveColor;
+        bool windyBefore = model.Windy;
+        bool toChhat = model.ColorOf(k) == model.ActiveColor;
         model.Free(k);
         Progress.RecordKiteFreed();
         moves++;
         Sync();
+        RefreshLooks();
         Sfx.Play(model.QueueIndex > queueBefore ? Sfx.Sound.ChhatDone : toChhat ? Sfx.Sound.Dock : Sfx.Sound.Free);
 
         if (model.Won)
@@ -386,8 +450,64 @@ public class TangleBoard : MonoBehaviour
             State = GameState.Won;
             CoinsEarned = Progress.CompleteLevel(level.number, Stars);
             Sfx.Play(Sfx.Sound.Win);
+            Sfx.Play(Sfx.Sound.BoKata);
         }
-        else StartSolve();
+        else
+        {
+            if (model.Windy != windyBefore) TurnWind();
+            StartSolve();
+        }
+        Changed?.Invoke();
+    }
+
+    // Ice, hidden colors and layers follow the model (after a move, the wind or an Undo).
+    void RefreshLooks()
+    {
+        for (int k = 0; k < kites.Count; k++)
+        {
+            if (model.IsFreed(k)) continue;
+            kites[k].SetIced(model.IsIced(k));
+            kites[k].SetHidden(model.IsHidden(k));
+            kites[k].SetLayer(model.LayerOf(k));
+        }
+    }
+
+    void TurnWind()
+    {
+        Sfx.Play(Sfx.Sound.Wind);
+        for (int k = 0; k < kites.Count; k++)
+            if ((windKites & (1 << k)) != 0 && !model.IsFreed(k)) kites[k].StartCoroutine(kites[k].Sway());
+        WindTurned?.Invoke();
+    }
+
+    // Undo booster: puts the state before the last move back (slots bought since are kept; hearts are not refunded).
+    public bool Undo()
+    {
+        if (!CanUndo) return false;
+        var previous = history.Pop();
+        previous.KeepSlots(model.SlotCount);
+        bool windyBefore = model.Windy;
+        model = previous;
+        moves++;
+        CutMode = false;
+        lastAction = Time.time;
+        for (int k = 0; k < kites.Count; k++)
+            if (!model.IsFreed(k)) kites[k].Undock();
+        Sync();
+        RefreshLooks();
+        if (model.Windy != windyBefore) TurnWind();
+        Sfx.Play(Sfx.Sound.Undo);
+        StartSolve();
+        Changed?.Invoke();
+        return true;
+    }
+
+    // Freeze booster: tangled taps cost no hearts until the level ends.
+    public void Freeze()
+    {
+        if (State != GameState.Playing) return;
+        Frozen = true;
+        Sfx.Play(Sfx.Sound.Freeze);
         Changed?.Invoke();
     }
 
@@ -446,6 +566,7 @@ public class TangleBoard : MonoBehaviour
         {
             if (BonusSlotAvailable) UnlockBonusSlot();
             else { model.AddSlot(); LayoutSlots(); StartSolve(); }
+            CutMode = false;
             foreach (var frame in slotFrames) frame.color = Color.white;
         }
         else Hearts = MaxHearts;

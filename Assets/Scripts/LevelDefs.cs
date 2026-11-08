@@ -46,6 +46,9 @@ public static class LevelDefs
         public Vector2 spool;   // charkhi
         public Vector2 anchor;  // where the string meets the kite
         public Vector2 bend;    // pushes the string curve sideways
+        public bool twin;       // double-string patang: a second string to a second charkhi
+        public Vector2 spool2;  // (twin only) the second charkhi
+        public Vector2 bend2;   // (twin only) the second string's bend
     }
 
     [Serializable]
@@ -56,6 +59,11 @@ public static class LevelDefs
         public int[] blockerMask; // bit j set = kite j's string lies on top of kite i's string
         public int[] queue;       // chhat colors in arrival order; each chhat takes PuzzleModel.ChhatSize kites
         public int slots;         // waiting slots
+        // Special kites (from level 21; older levels leave these empty):
+        public int[] crossMask;   // bit j set = a string of kite j crosses a string of kite i (needed for wind)
+        public int ice;           // bit k = kite k starts iced: the first tap only cracks the ice
+        public int hidden;        // bit k = kite k's color is hidden until nothing lies on its string
+        public int[] wind;        // pairs (a, b): while the wind blows these two kites swap layers
     }
 
     // Levels pre-built in the editor (Kite Tangle > Bake Levels) and shipped as Resources/Levels/levels.json.

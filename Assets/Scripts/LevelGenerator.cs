@@ -18,6 +18,23 @@ public static class LevelGenerator
         public float maxRandomWin; // share of random (but legal) plays allowed to win; lower = more thinking
     }
 
+    // Special kites, each introduced on its own (a "How to play" card shows on its first level):
+    // ice from IceFrom, hidden colors from HiddenFrom, double strings from TwinFrom, wind from WindFrom.
+    public const int IceFrom = 21, HiddenFrom = 31, TwinFrom = 41, WindFrom = 51;
+
+    struct Specials
+    {
+        public int ice, hidden, twins, windPairs;
+    }
+
+    static Specials SpecialsFor(int level) => new Specials
+    {
+        ice = level < IceFrom ? 0 : level < 35 ? 1 : level < 70 ? 2 : 3,
+        hidden = level < HiddenFrom ? 0 : level < 60 ? 2 : 3,
+        twins = level < TwinFrom ? 0 : level < 80 ? 1 : 2,
+        windPairs = level < WindFrom ? 0 : level < 100 ? 1 : 2,
+    };
+
     static Settings For(int level)
     {
         if (level <= 1) return new Settings { colors = 2, slots = 5, maxRandomWin = 1f }; // tutorial
@@ -43,7 +60,8 @@ public static class LevelGenerator
             for (int attempt = 0; attempt < AttemptsPerSlotCount; attempt++)
             {
                 var rng = new System.Random(level * 7919 + slots * 104729 + attempt);
-                var data = Build(level, kiteCount, settings.colors, slots, rng);
+                var data = Build(level, kiteCount, settings.colors, slots, rng,
+                    new System.Random(level * 6271 + slots * 337 + attempt * 13));
                 if (PuzzleModel.Solve(new PuzzleModel(data)) == null) continue;
                 if (level >= 3 && ObviousPlayWins(data)) continue;
 
@@ -77,7 +95,8 @@ public static class LevelGenerator
         return wins / (float)RandomPlays;
     }
 
-    static LevelDefs.LevelData Build(int level, int kiteCount, int colorCount, int slots, System.Random rng)
+    // `special` is a separate random stream, so adding special kites never changed levels 1-20.
+    static LevelDefs.LevelData Build(int level, int kiteCount, int colorCount, int slots, System.Random rng, System.Random special)
     {
         var colorIds = new List<int>();
         for (int c = 0; c < colorCount; c++)
@@ -108,20 +127,27 @@ public static class LevelGenerator
             curves[i] = StringGeometry.Sample(kites[i].spool, kites[i].anchor, kites[i].bend);
         }
 
-        var blockerMask = new int[kiteCount];
+        var specials = SpecialsFor(level);
+        var twinCurves = new Vector2[kiteCount][];
+        if (specials.twins > 0) AddTwins(kites, twinCurves, curves, specials.twins, special);
+
+        var crossMask = new int[kiteCount];
         for (int i = 0; i < kiteCount; i++)
         for (int j = i + 1; j < kiteCount; j++)
         {
-            if (!StringGeometry.Cross(curves[i], curves[j])) continue;
-            if (kites[i].layer > kites[j].layer) blockerMask[j] |= 1 << i;
-            else blockerMask[i] |= 1 << j;
+            if (!Crosses(curves[i], twinCurves[i], curves[j], twinCurves[j])) continue;
+            crossMask[i] |= 1 << j;
+            crossMask[j] |= 1 << i;
         }
+        var layerOf = new int[kiteCount];
+        for (int i = 0; i < kiteCount; i++) layerOf[i] = kites[i].layer;
+        var blockerMask = PuzzleModel.BlockersFrom(crossMask, layerOf);
 
         var queue = new List<int>();
         for (int c = 0; c < colorCount; c++) queue.Add(c);
         Shuffle(queue, rng);
 
-        return new LevelDefs.LevelData
+        var data = new LevelDefs.LevelData
         {
             number = level,
             kites = kites,
@@ -129,6 +155,77 @@ public static class LevelGenerator
             queue = queue.ToArray(),
             slots = slots,
         };
+        if (level >= IceFrom) AddSpecials(data, crossMask, specials, special);
+        return data;
+    }
+
+    static bool Crosses(Vector2[] a, Vector2[] a2, Vector2[] b, Vector2[] b2) =>
+        StringGeometry.Cross(a, b) || (a2 != null && StringGeometry.Cross(a2, b)) ||
+        (b2 != null && StringGeometry.Cross(a, b2)) || (a2 != null && b2 != null && StringGeometry.Cross(a2, b2));
+
+    // Gives `count` kites a second string. All charkhis are re-spaced along the roof so the extra ones fit.
+    static void AddTwins(LevelDefs.KiteDef[] kites, Vector2[][] twinCurves, Vector2[][] curves, int count, System.Random rng)
+    {
+        int n = kites.Length, spools = n + count;
+        var order = new List<int>();
+        for (int i = 0; i < spools; i++) order.Add(i);
+        Shuffle(order, rng);
+        float X(int slot) => 0.04f + 0.92f * slot / (spools - 1f);
+
+        var twins = new List<int>();
+        for (int i = 0; i < n; i++) twins.Add(i);
+        Shuffle(twins, rng);
+        twins.RemoveRange(count, n - count);
+
+        for (int i = 0; i < n; i++)
+        {
+            kites[i].spool = new Vector2(X(order[i]), 0f);
+            curves[i] = StringGeometry.Sample(kites[i].spool, kites[i].anchor, kites[i].bend);
+        }
+        for (int t = 0; t < count; t++)
+        {
+            int i = twins[t];
+            kites[i].twin = true;
+            kites[i].spool2 = new Vector2(X(order[n + t]), 0f);
+            kites[i].bend2 = new Vector2(Range(rng, -0.08f, 0.08f), 0f);
+            twinCurves[i] = StringGeometry.Sample(kites[i].spool2, kites[i].anchor, kites[i].bend2);
+        }
+    }
+
+    // Ice on random kites, hidden colors on kites that start covered (an uncovered one would show at once),
+    // and wind pairs on strings that cross.
+    static void AddSpecials(LevelDefs.LevelData data, int[] crossMask, Specials specials, System.Random rng)
+    {
+        int n = data.kites.Length;
+        data.crossMask = crossMask;
+        var pool = new List<int>();
+        for (int i = 0; i < n; i++) pool.Add(i);
+
+        Shuffle(pool, rng);
+        for (int t = 0; t < specials.ice && t < n; t++) data.ice |= 1 << pool[t];
+
+        Shuffle(pool, rng);
+        int hidden = 0;
+        foreach (int k in pool)
+            if (hidden < specials.hidden && data.blockerMask[k] != 0) { data.hidden |= 1 << k; hidden++; }
+
+        var pairs = new List<int>();
+        int used = 0;
+        Shuffle(pool, rng);
+        foreach (int a in pool)
+        {
+            if (pairs.Count / 2 >= specials.windPairs) break;
+            if ((used & (1 << a)) != 0) continue;
+            for (int b = 0; b < n; b++)
+            {
+                if (b == a || (used & (1 << b)) != 0 || (crossMask[a] & (1 << b)) == 0) continue;
+                pairs.Add(a);
+                pairs.Add(b);
+                used |= (1 << a) | (1 << b);
+                break;
+            }
+        }
+        if (pairs.Count > 0) data.wind = pairs.ToArray();
     }
 
     // Random kite anchors in the upper part of the field, kept apart so kites don't overlap.
@@ -166,7 +263,7 @@ public static class LevelGenerator
             {
                 if (!m.IsUntangled(k)) continue;
                 if (data.kites[k].colorId == m.ActiveColor) { pick = k; break; }
-                if (pick < 0 || data.kites[k].layer > data.kites[pick].layer) pick = k;
+                if (pick < 0 || m.LayerOf(k) > m.LayerOf(pick)) pick = k;
             }
             if (pick < 0 || !m.CanPlace(pick)) return false;
             m.Free(pick);

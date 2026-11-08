@@ -16,6 +16,8 @@ It combines "pick-up sticks" (Mikado) with the Bus Jam / Parking Jam genre.
 - Tap a free kite that doesn't match the active chhat while every slot is full → **"No Space!"** (you lose).
 - Clear every chhat → **"Bo Kata!"**, and progress is saved to `PlayerPrefs["level"]`.
 - **Hint** runs the solver from the current state and pulses the next correct kite.
+- **Special kites** (from level 21, `LevelGenerator.IceFrom/HiddenFrom/TwinFrom/WindFrom` = 21/31/41/51): **ice** (first tap on an untangled iced kite only cracks it), **hidden color** (gray "?" until nothing lies on its string), **double string** (two strings to two charkhis, both must be clear), **wind** (streamer kites: each wind pair swaps layers while an odd number of chhats have left).
+- **Boosters** (`Progress.Booster`): **Undo** (state before the last move; bought slots kept, hearts not refunded), **Cut** (next tap frees any kite, even tangled, if it can be placed), **Freeze** (tangled taps cost no hearts for the level). One of each to start; more for coins or an ad.
 
 ## Architecture (`Assets/Scripts/`)
 All objects are created from code at runtime. The scene holds only a Camera, a `TangleBoard` object and a `GameUI` object, and there are no prefabs.
@@ -34,8 +36,9 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 | `Art.cs` | Loads sprites/fonts from Resources, the UI palette (`Ink`, `Cream`, `Saffron`…), `DesignPx` (390-px design → world units) and the `Icon` code points. |
 | `Progress.cs` | PlayerPrefs: `level` (highest unlocked), `stars_N`, `coins`, `hints`, `sound`, `vibration`, `tut_N`, stats `st_*` (`Progress.Stat`: played, wins, losses, streak, best streak, kites freed, hints used), `sig`, `sig_v`; `Changed` event. `ToCloudJson`/`MergeCloud` for the cloud save (the save that got further keeps level/coins/hints/stats; stars keep the best of both). |
 | `CloudSave.cs` | Google Play Games plugin 2.3.0 (`Assets/GooglePlayGames`, `play-services-games-v2` in `mainTemplate.gradle`) Saved Games file `kite_tangle_progress`. Off (`Available` false) until Window > Google Play Games > Setup > Android setup fills in the App ID. Silent sign-in, read + merge first, then upload on `Progress.Changed` (max every 30 s) and on app pause. Editor/desktop: no-op. |
-| `Sfx.cs` | Placeholder synthesized sounds + vibration. Swap in recorded clips later. |
-| `Ads.cs` | Google AdMob (plugin 11.5.0 in `Assets/GoogleMobileAds`, gradle templates in `Plugins/Android`) with Google's **TEST IDs**. Few ads: rewarded only on request (`ShowRewarded`), an interstitial only via `AfterWin` (from level 10, every 4th win, 3+ min apart), no banners/app-open. UMP consent in `Init`; `PrivacyOptionsRequired`/`ShowPrivacyOptions` for Settings. Editor/desktop: rewarded succeeds at once. Real IDs: App ID in `Assets/GoogleMobileAds/Resources/GoogleMobileAdsSettings.asset`, unit IDs in `Ads.cs`. |
+| `Sfx.cs` | Synthesized sounds (incl. crack, wind, cut, undo, freeze, a "Bo Kata!" voice cue) + background music (raag Bhupali tune, drone and dholak, built on a worker thread) + vibration. Swap in recorded clips later. |
+| `Purchases.cs` | "Remove Ads" in-app product `remove_ads` via **Google Play Billing Library 8** called through JNI/`AndroidJavaProxy` (`com.android.billingclient:billing:8.0.0` in `mainTemplate.gradle` + `Editor/BillingDependencies.xml`). Restores owned purchases at start, acknowledges, revokes on refund. Results are queued to the main thread. Editor/desktop: Buy grants at once. |
+| `Ads.cs` | Google AdMob (plugin 11.5.0 in `Assets/GoogleMobileAds`, gradle templates in `Plugins/Android`) with Google's **TEST IDs**. Few ads: rewarded only on request (`ShowRewarded`), an interstitial only via `AfterWin` (from level 10, every 4th win, 3+ min apart), no banners/app-open. UMP consent in `Init`; `PrivacyOptionsRequired`/`ShowPrivacyOptions` for Settings. Editor/desktop: rewarded succeeds at once. Real IDs: App ID in `Assets/GoogleMobileAds/Resources/GoogleMobileAdsSettings.asset`, unit IDs in `Ads.cs`. No interstitials with Remove Ads. **Test "no ad"**: `adb shell touch /sdcard/Android/data/com.zekoclub.kitetangle/files/ads_off_test` (or `-noads` on desktop) makes every ad fail to load. |
 | `SpriteFactory.cs` | An anti-aliased circle sprite for UI badges. |
 | `UI/UIKit.cs` | Helpers for building uGUI from code (`Node`, `Fill`, `At`, `Img`, `Label`, `Glyph`, `MakeButton`), plus `PressScale`, `Bob`, `SafeArea`. |
 | `UI/GameUI.cs` | All screens on one Screen Space Overlay canvas: Home, HUD, Win, Lose, Pause, Settings, Shop, loading pill, toasts. Android back = Escape. |
@@ -54,7 +57,8 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 - **Keep game rules only in `PuzzleModel`.** The generator, the solver and the board all depend on it. Visual code must never decide rules.
 - Level geometry is **normalized** and mapped to the screen only by linear scaling (`TangleBoard.ToWorld`), which keeps string crossings the same on every screen size. Don't add world-space offsets to string points (the string *shadow* is moved as a whole via its transform, which is fine).
 - Strings are a dark outline in their own color (`PaletteDark` mixed with Ink), the cord (`Palette`) and a thin shine (`PaletteLight`). No light outline: it read as a white border on the dusk/night skies.
-- A layer is "on top" only because of its `sortingOrder`: string outline = `layer*3`, cord = `layer*3+1`, shine = `layer*3+2`; string shadows -5; sky decor -99..-95; kite body in the sky = `200 + layer*2` (its shadow one below); charkhis 150; hint ring 250.
+- A layer is "on top" only because of its `sortingOrder`: string outline = `layer*3`, cord = `layer*3+1`, shine = `layer*3+2`; string shadows -5; sky decor -99..-95; kite body in the sky = `Kite.SkyOrder(layer)` = `160 + layer*5` (shadow -1, wind streamer -2, skin +1, ice +2); charkhis 150; hint ring 250. The wind changes layers at runtime (`Kite.SetLayer`).
+- Every reward an ad can pay for also has a coin price (`GameUI.BonusSlotPrice`, `ContinuePrice`, `BoosterPrices`), via the Offer popup (`ShowOffer`) or the second lose button; `GameUI.Rewarded` gives it free with Remove Ads (`Progress.FreeRewardsPerDay` a day), else shows a rewarded ad.
   Sky -100, roof band -10. Chhat rooftops 300, dock markers 302, slots 300, docked kites 400. Keep new world-space UI outside the 0–229 range used by strings and kites in the sky.
 - A kite can have at most 32 bits in the masks, and the solver is fine up to about 15–16 kites. More kites need a different solver.
 
@@ -76,6 +80,8 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 - Win screen: confetti (`Confetti` in UIKit), a star rating word (Perfect!/Great!/Well done!), coins counting up (`CountUp`, `Sfx.Sound.Coin`).
 - Saves carry a checksum (`sig`) of level, coins, hints and stats (`sig_v` = 2; older saves are checked with the old 3-value checksum once and re-signed); `Progress.Validate()` at startup resets coins/hints if it doesn't match.
 - Stats screen: button under Settings on Home (`GameUI.ShowStats`).
+- HUD bottom row: Undo, Cut, **Hint**, Freeze, Restart (`GameUI.BarButton`, count badges). Shop is a scrolling list (Remove Ads, Free Coins, hint and booster packs, Kite Skins); Kite Skins popup (`Art.SkinFiles/SkinNames/SkinPrices`, `Progress.Skin`). Settings/Pause have sound, music and vibration toggles.
+- Overlay sprites (`kite_hidden`, `spool_hidden`, `kite_ice`, `kite_skin_*`) come from `python3 Tools/gen_kite_overlays.py` (same 256x358 frame as the kites, so the importer's kite pivot lines them up).
 - App icon: `Tools/gen_icon.py` → `Assets/Store/icon.png` + adaptive layers (applied by `Builder`); `Store/play-icon-512.png` for the listing. All Play Store material lives in `Store/` (listing, checklist, privacy policy, app-ads.txt, screenshots; see `Store/README.md`). The Unity splash is off.
 - Wording and theme: "Bo Kata!" (win), chhat = rooftop, charkhi = spool, patang = kite, dor = kite string.
 
@@ -96,7 +102,7 @@ Art and fonts load from `Assets/Resources` (`Art/…` sprites, `Fonts/…`); the
 ## Roadmap
 1. ~~Stage 1: core tap and the "on top" rule~~ (done)
 2. ~~Stage 2: chhat queue, slots, generated levels, solver, hint, difficulty filter~~ (done)
-3. ~~Real UI and art: HUD, menus, kite/chhat/charkhi sprites, sky~~ (done). Still to do: recorded sounds ("Bo Kata!" shout, wind), music, kite skins
-4. Boosters: Undo, Cut Any, Freeze; AdMob is in with test IDs (real IDs before release)
-5. New mechanics: double-string patang, wind (swaps which string is on top), ice string (2 taps), hidden-color kite, and later **dragging a charkhi to an empty peg** (the moved string goes on top)
+3. ~~Real UI and art: HUD, menus, kite/chhat/charkhi sprites, sky~~ (done). ~~Music, kite skins~~ (done, synthesized music; skins from `Tools/gen_kite_overlays.py`). Still to do: recorded sounds ("Bo Kata!" shout, wind)
+4. ~~Boosters: Undo, Cut Any, Freeze~~ (done); AdMob is in with test IDs (real IDs before release); Remove Ads purchase (product to create in Play Console)
+5. ~~New mechanics: double-string patang, wind, ice string, hidden-color kite~~ (done, levels 21/31/41/51+). Later: **dragging a charkhi to an empty peg** (the moved string goes on top)
 6. Pre-generate levels in the editor (some levels take about 1.4 s to generate on a PC and 3–4 s on a phone)

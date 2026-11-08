@@ -14,8 +14,24 @@ using GoogleMobileAds.Ump.Api;
 // App ID in Assets/GoogleMobileAds/Resources/GoogleMobileAdsSettings.asset and the real ad unit IDs below.
 // Consent (GDPR/EEA) goes through Google's UMP form before any ad is requested.
 // In the Editor and desktop builds there is no SDK: rewarded ads succeed at once and no interstitial shows.
+// Remove Ads (Progress.NoAds): no interstitials at all; GameUI gives rewards without an ad (a few a day).
+// Testing "no ad available": a file named ads_off_test in Application.persistentDataPath (on a phone:
+//   adb shell touch /sdcard/Android/data/com.zekoclub.kitetangle/files/ads_off_test
+// then restart the app), or -noads on a desktop build, makes every ad fail to load, so the coin options can be checked.
 public static class Ads
 {
+    public static readonly bool TestNoFill = DetectTestNoFill();
+
+    static bool DetectTestNoFill()
+    {
+        try
+        {
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), "-noads") >= 0) return true;
+            return System.IO.File.Exists(System.IO.Path.Combine(Application.persistentDataPath, "ads_off_test"));
+        }
+        catch (Exception) { return false; }
+    }
+
     const string RewardedUnitId = "ca-app-pub-3940256099942544/5224354917";      // TEST rewarded
     const string InterstitialUnitId = "ca-app-pub-3940256099942544/1033173712";  // TEST interstitial
 
@@ -29,6 +45,7 @@ public static class Ads
     // Called after every win. True when an interstitial may show now (the rules above).
     static bool InterstitialDue(int level)
     {
+        if (Progress.NoAds) return false;
         winsSinceInterstitial++;
         return level >= FirstInterstitialLevel && winsSinceInterstitial >= InterstitialEveryWins
                && Time.realtimeSinceStartup - lastFullScreenAt >= MinGapSeconds;
@@ -45,6 +62,7 @@ public static class Ads
     {
         if (started) return;
         started = true;
+        if (TestNoFill) Debug.LogWarning("[Ads] ads_off_test: every ad will fail to load (testing).");
         ConsentInformation.Update(new ConsentRequestParameters(), updateError =>
         {
             if (updateError != null) Debug.LogWarning("[Ads] Consent update failed: " + updateError.Message);
@@ -77,7 +95,7 @@ public static class Ads
 
     static void LoadRewarded()
     {
-        if (!initialised || loadingRewarded || (rewarded != null && rewarded.CanShowAd())) return;
+        if (TestNoFill || !initialised || loadingRewarded || (rewarded != null && rewarded.CanShowAd())) return;
         loadingRewarded = true;
         RewardedAd.Load(RewardedUnitId, new AdRequest(), (ad, error) =>
         {
@@ -94,7 +112,7 @@ public static class Ads
 
     static void LoadInterstitial()
     {
-        if (!initialised || loadingInterstitial || (interstitial != null && interstitial.CanShowAd())) return;
+        if (TestNoFill || Progress.NoAds || !initialised || loadingInterstitial || (interstitial != null && interstitial.CanShowAd())) return;
         loadingInterstitial = true;
         InterstitialAd.Load(InterstitialUnitId, new AdRequest(), (ad, error) =>
         {
@@ -173,12 +191,12 @@ public static class Ads
     public static void Init() { }
     public static bool PrivacyOptionsRequired => false;
     public static void ShowPrivacyOptions() { }
-    public static bool RewardedReady => true;
+    public static bool RewardedReady => !TestNoFill;
 
     public static void ShowRewarded(string placement, Action<bool> onDone)
     {
-        Debug.Log($"[Ads] (no SDK here) rewarded '{placement}' granted.");
-        onDone?.Invoke(true);
+        Debug.Log($"[Ads] (no SDK here) rewarded '{placement}' " + (TestNoFill ? "has no ad (-noads)." : "granted."));
+        onDone?.Invoke(!TestNoFill);
     }
 
     public static void AfterWin(int level, Action onDone)

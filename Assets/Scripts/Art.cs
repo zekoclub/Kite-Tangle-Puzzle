@@ -40,6 +40,14 @@ public static class Art
     public static Sprite RooftopSprite(int colorId) => Load("rooftops/rooftop_" + LevelDefs.ColorNames[colorId]);
     public static Sprite SpoolSprite(int colorId) => Load("spools/spool_" + LevelDefs.ColorNames[colorId]);
 
+    // Kite skins: a pattern drawn over every kite (Tools/gen_kite_overlays.py). 0 = classic (no pattern).
+    public static readonly string[] SkinFiles = { null, "chand", "patti", "gudda", "sunehri" };
+    public static readonly string[] SkinNames = { "Classic", "Chand Tara", "Patti", "Gudda Eye", "Sunehri" };
+    public static readonly int[] SkinPrices = { 0, 300, 300, 450, 600 };
+
+    public static Sprite SkinSprite(int skin) =>
+        skin > 0 && skin < SkinFiles.Length ? Load("kites/kite_skin_" + SkinFiles[skin]) : null;
+
     // Uniform scale that makes the sprite `width` world units wide.
     public static float ScaleForWidth(Sprite sprite, float width) => width / sprite.bounds.size.x;
 
@@ -85,4 +93,12 @@ public static class Icon
     public const string Streak = "";
     public const string Cloud = "";
     public const string CloudDone = "";
+    public const string Undo = "";
+    public const string Cut = "";
+    public const string Freeze = "";
+    public const string Wind = "";
+    public const string NoAds = "";
+    public const string Palette = "";
+    public const string Help = "";
+    public const string Gift = "";
 }

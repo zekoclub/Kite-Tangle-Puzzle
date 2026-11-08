@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Google Play Billing for the Remove Ads purchase (Purchases.cs). Read by the External Dependency Manager. -->
+<dependencies>
+  <androidPackages>
+    <androidPackage spec="com.android.billingclient:billing:8.0.0" />
+  </androidPackages>
+</dependencies>

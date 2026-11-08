@@ -100,6 +100,37 @@ public partial class GameUI
         ShowHome();
         ShowStats();
         yield return Shot(folder, "15-stats");
+        CloseAllPopups();
+        ShowSkins();
+        yield return Shot(folder, "16-skins");
+        CloseAllPopups();
+
+        // Special kites, each on its first level, and the boosters.
+        yield return Play(LevelGenerator.IceFrom);
+        yield return Shot(folder, "17-ice");
+        yield return Play(LevelGenerator.HiddenFrom);
+        yield return Shot(folder, "18-hidden");
+        yield return Play(LevelGenerator.TwinFrom);
+        yield return Shot(folder, "19-double-string");
+        yield return Play(LevelGenerator.WindFrom);
+        yield return Shot(folder, "20-wind");
+        for (int m = 0; m < 20 && !board.Windy && board.State == TangleBoard.GameState.Playing; m++) yield return Moves(1);
+        yield return Shot(folder, "21-wind-turned");
+        OnBooster(Progress.Booster.Undo);
+        yield return Shot(folder, "22-undo");
+        OnBooster(Progress.Booster.Cut);
+        yield return Shot(folder, "23-cut-mode");
+        board.CutMode = false;
+        OnBonusSlotTapped();
+        yield return Shot(folder, "24-offer");
+        CloseAllPopups();
+        Purchases.BuyRemoveAds(); // no store on desktop: granted at once
+        OpenPopup(shop);
+        yield return Shot(folder, "25-shop-noads");
+        CloseAllPopups();
+        OnBonusSlotTapped();
+        yield return Shot(folder, "26-offer-noads");
+        CloseAllPopups();
 
         Debug.Log("[UiTour] done");
         Application.Quit();
