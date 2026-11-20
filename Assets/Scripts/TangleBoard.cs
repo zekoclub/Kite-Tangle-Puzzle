@@ -9,10 +9,12 @@ using UnityEngine.EventSystems;
 public class TangleBoard : MonoBehaviour
 {
     public const int MaxHearts = 3;
-    public const float HudHeightPx = 190f;  // top HUD height in the 1080x1920 canvas reference
+    public const float HudHeightPx = 215f;  // top HUD height in the 1080x1920 canvas reference (incl. the tip line)
     public const float RoofBandPx = 250f;   // bottom roof band (Hint/Restart buttons) in the same reference
     public const float RefHeight = 1920f;
     public const float RefWidth = 1080f;
+    public const int BonusSlotFrom = 4;     // the "+1 FREE" slot shows from this level (kept out of the first lessons)
+    public const int ForgivingLevels = 1;   // tangled taps cost no heart on these levels
 
     /// Screen pixels per canvas unit; matches GameUI's CanvasScaler (Expand mode).
     public static float UiScale => Mathf.Min(Screen.width / RefWidth, Screen.height / RefHeight);
@@ -48,6 +50,12 @@ public class TangleBoard : MonoBehaviour
     public event Action BonusSlotTapped;  // the player tapped the locked "+1 FREE" slot
     public event Action<bool> CutDone;    // Cut booster: true = a kite was cut loose, false = it had nowhere to go
     public event Action WindTurned;       // a chhat left and the wind swapped the wind kites' layers
+    public event Action LockedTapped;     // the player tapped a kite whose key kite is still in the sky
+    public event Action TangledTapped;    // the player tapped a kite with a string on top (shown as a tip)
+    public event Action Unlocked;         // a key kite was freed and its locked kite opened
+
+    /// First level: a bouncing arrow points at the next good kite, again after every move.
+    public bool GuideArrows { get; set; }
 
     // Boosters (GameUI pays for them; the board only applies them).
     public bool CanUndo => State == GameState.Playing && history.Count > 0;
@@ -58,6 +66,7 @@ public class TangleBoard : MonoBehaviour
     public bool HasIce => level != null && level.ice != 0;
     public bool HasHidden => level != null && level.hidden != 0;
     public bool HasTwins => level != null && Array.Exists(level.kites, k => k.twin);
+    public bool HasLocks => level != null && level.locks != null && level.locks.Length > 0;
 
     readonly List<Kite> kites = new();
     readonly List<ChhatView> chhats = new();
@@ -208,6 +217,14 @@ public class TangleBoard : MonoBehaviour
         float spoolGap = 0.92f * 2f * fieldHalfW / Mathf.Max(1, spoolCount - 1);
         float spoolWidth = Mathf.Min(26f * Art.DesignPx, spoolGap * 0.95f);
         var skin = Art.SkinSprite(Progress.Skin);
+        var lockPair = new int[level.kites.Length];
+        var keyPair = new int[level.kites.Length];
+        if (level.locks != null)
+            for (int p = 0; p + 1 < level.locks.Length; p += 2)
+            {
+                keyPair[level.locks[p]] = p / 2 + 1;
+                lockPair[level.locks[p + 1]] = p / 2 + 1;
+            }
         for (int i = 0; i < level.kites.Length; i++)
         {
             var kite = new GameObject($"Kite_{i}").AddComponent<Kite>();
@@ -215,6 +232,7 @@ public class TangleBoard : MonoBehaviour
             kite.Init(i, level.kites[i], ToWorld, spoolWidth, new Kite.Look
             {
                 iced = model.IsIced(i), hidden = model.IsHidden(i), wind = (windKites & (1 << i)) != 0, skin = skin,
+                lockPair = lockPair[i], keyPair = keyPair[i],
             });
             kites.Add(kite);
         }
@@ -223,19 +241,29 @@ public class TangleBoard : MonoBehaviour
         {
             var view = new GameObject("Chhat").AddComponent<ChhatView>();
             view.transform.SetParent(levelRoot, false);
-            view.Init(colorId);
+            view.Init(colorId, level.ChhatSize);
             chhats.Add(view);
         }
 
         Hearts = MaxHearts;
         UsedContinue = false;
-        BonusSlotAvailable = true;
+        BonusSlotAvailable = number >= BonusSlotFrom;
         CoinsEarned = 0;
         Reason = LoseReason.None;
         State = GameState.Playing;
         LayoutSlots();
         Sync(snap: true);
+        RefreshArrows();
         Changed?.Invoke();
+    }
+
+    // Guide arrows (first level): point at the first kite of a solution from here.
+    void RefreshArrows()
+    {
+        foreach (var kite in kites) kite.ShowTapArrow(false);
+        if (!GuideArrows || State != GameState.Playing) return;
+        var path = PuzzleModel.Solve(model.Clone()); // tiny levels only: instant
+        if (path is { Count: > 0 }) kites[path[0]].ShowTapArrow(true);
     }
 
     // Creates any missing slot objects and spaces them evenly; the locked bonus slot goes last.
@@ -393,11 +421,28 @@ public class TangleBoard : MonoBehaviour
         if (!model.IsUntangled(k))
         {
             tapped.StartCoroutine(tapped.Shake());
-            int blockers = model.BlockersOf(k);
-            for (int j = 0; j < kites.Count; j++)
-                if ((blockers & (1 << j)) != 0 && !model.IsFreed(j))
-                    kites[j].Flash();
+            bool lockedOnly = model.IsClear(k) && model.IsLocked(k);
+            if (lockedOnly)
+            {
+                int keys = model.KeysOf(k);
+                for (int j = 0; j < kites.Count; j++)
+                    if ((keys & (1 << j)) != 0 && !model.IsFreed(j)) kites[j].Nudge();
+                LockedTapped?.Invoke();
+            }
+            else
+            {
+                int blockers = model.BlockersOf(k);
+                for (int j = 0; j < kites.Count; j++)
+                    if ((blockers & (1 << j)) != 0 && !model.IsFreed(j))
+                        kites[j].Flash();
+                TangledTapped?.Invoke();
+            }
             Sfx.Buzz();
+            if (level.number <= ForgivingLevels)
+            {
+                Sfx.Play(Sfx.Sound.Wrong); // first lesson: the mistake costs nothing
+                return;
+            }
             if (Frozen)
             {
                 Sfx.Play(Sfx.Sound.Freeze); // hearts are frozen: the mistake costs nothing
@@ -438,7 +483,9 @@ public class TangleBoard : MonoBehaviour
         int queueBefore = model.QueueIndex;
         bool windyBefore = model.Windy;
         bool toChhat = model.ColorOf(k) == model.ActiveColor;
+        bool wasKey = model.IsKey(k);
         model.Free(k);
+        if (wasKey) { Sfx.Play(Sfx.Sound.Unlock); Unlocked?.Invoke(); }
         Progress.RecordKiteFreed();
         moves++;
         Sync();
@@ -457,6 +504,7 @@ public class TangleBoard : MonoBehaviour
             if (model.Windy != windyBefore) TurnWind();
             StartSolve();
         }
+        RefreshArrows();
         Changed?.Invoke();
     }
 
@@ -468,6 +516,7 @@ public class TangleBoard : MonoBehaviour
             if (model.IsFreed(k)) continue;
             kites[k].SetIced(model.IsIced(k));
             kites[k].SetHidden(model.IsHidden(k));
+            kites[k].SetLocked(model.IsLocked(k));
             kites[k].SetLayer(model.LayerOf(k));
         }
     }
@@ -498,6 +547,7 @@ public class TangleBoard : MonoBehaviour
         if (model.Windy != windyBefore) TurnWind();
         Sfx.Play(Sfx.Sound.Undo);
         StartSolve();
+        RefreshArrows();
         Changed?.Invoke();
         return true;
     }
@@ -539,6 +589,8 @@ public class TangleBoard : MonoBehaviour
 
     // For the screenshot tour: the next solution move, a covered kite, or -1.
     public int NextGoodKite() => PuzzleModel.Solve(model.Clone()) is { Count: > 0 } path ? path[0] : -1;
+    public bool IsLockedKite(int k) => model != null && k < kites.Count && !model.IsFreed(k) && model.IsLocked(k);
+    public bool HasLockedKites { get { for (int k = 0; k < kites.Count; k++) if (IsLockedKite(k)) return true; return false; } }
     public int SomeCoveredKite()
     {
         for (int k = 0; k < kites.Count; k++)

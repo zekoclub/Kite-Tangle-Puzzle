@@ -57,8 +57,11 @@ public static class LevelDefs
         public int number;
         public KiteDef[] kites;
         public int[] blockerMask; // bit j set = kite j's string lies on top of kite i's string
-        public int[] queue;       // chhat colors in arrival order; each chhat takes PuzzleModel.ChhatSize kites
+        public int[] queue;       // chhat colors in arrival order; each chhat takes ChhatSize kites
         public int slots;         // waiting slots
+        public int chhatSize;     // kites per chhat (2 on the first levels); 0 = PuzzleModel.DefaultChhatSize
+        public int[] locks;       // pairs (key, lock): the lock kite can't fly until the key kite is freed
+        public int ChhatSize => chhatSize > 0 ? chhatSize : PuzzleModel.DefaultChhatSize;
         // Special kites (from level 21; older levels leave these empty):
         public int[] crossMask;   // bit j set = a string of kite j crosses a string of kite i (needed for wind)
         public int ice;           // bit k = kite k starts iced: the first tap only cracks the ice

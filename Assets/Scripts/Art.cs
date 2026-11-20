@@ -16,6 +16,7 @@ public static class Art
     public static readonly Color RoofEdge = Hex("9C6440");
     public static readonly Color Danger = Hex("B83A26");
     public static readonly Color Muted = Hex("6B5444");
+    public static readonly Color Success = Hex("3FA66A");
     public static readonly Color StringShadow = new Color(42 / 255f, 26 / 255f, 18 / 255f, 0.16f);
 
     static readonly Dictionary<string, Sprite> sprites = new();

@@ -60,6 +60,18 @@ public partial class GameUI
         yield return Shot(folder, "03-tutorial-card");
         CloseAllPopups();
         yield return Shot(folder, "04-level1");
+        int covered = board.SomeCoveredKite();
+        if (covered >= 0) board.Tap(covered); // level 1 forgives the mistake and says why
+        yield return Shot(folder, "04b-level1-wrong-tap");
+        yield return Moves(1);
+        yield return Shot(folder, "04c-level1-next-arrow");
+
+        yield return Play(2);
+        yield return Shot(folder, "04d-level2");
+        yield return Play(3);
+        yield return Shot(folder, "04e-level3");
+        yield return Play(4);
+        yield return Shot(folder, "04f-level4");
 
         yield return Play(5);
         yield return Shot(folder, "05-level5-day");
@@ -77,9 +89,18 @@ public partial class GameUI
         OpenPopup(pause);
         yield return Shot(folder, "10-pause");
         CloseAllPopups();
+        CloudSave.Preview = true; // desktop: show the backup rows as a signed-in player sees them
+        RefreshSettings();
         OpenPopup(settings);
         yield return Shot(folder, "11-settings");
         CloseAllPopups();
+        Progress.AutoBackup = false;
+        RefreshSettings();
+        OpenPopup(settings);
+        yield return Shot(folder, "11b-settings-auto-backup-off");
+        CloseAllPopups();
+        Progress.AutoBackup = true;
+        CloudSave.Preview = false;
         OpenPopup(shop);
         yield return Shot(folder, "12-shop");
         CloseAllPopups();
@@ -106,6 +127,15 @@ public partial class GameUI
         CloseAllPopups();
 
         // Special kites, each on its first level, and the boosters.
+        yield return LoadLevel(LevelGenerator.LockFrom); // first time: the Lock and key card
+        yield return Shot(folder, "16b-lock-card");
+        CloseAllPopups();
+        yield return Shot(folder, "16c-lock-level");
+        for (int k = 0; k < 20; k++)
+            if (board.IsLockedKite(k)) { board.Tap(k); break; }
+        yield return Shot(folder, "16d-locked-tap");
+        for (int m = 0; m < 20 && board.HasLockedKites && board.State == TangleBoard.GameState.Playing; m++) yield return Moves(1);
+        yield return Shot(folder, "16e-unlocked");
         yield return Play(LevelGenerator.IceFrom);
         yield return Shot(folder, "17-ice");
         yield return Play(LevelGenerator.HiddenFrom);

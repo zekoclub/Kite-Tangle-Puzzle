@@ -14,42 +14,51 @@ public static class LevelGenerator
     struct Settings
     {
         public int colors;
+        public int size;  // kites per chhat
         public int slots;
         public float maxRandomWin; // share of random (but legal) plays allowed to win; lower = more thinking
     }
 
     // Special kites, each introduced on its own (a "How to play" card shows on its first level):
-    // ice from IceFrom, hidden colors from HiddenFrom, double strings from TwinFrom, wind from WindFrom.
-    public const int IceFrom = 21, HiddenFrom = 31, TwinFrom = 41, WindFrom = 51;
+    // lock & key from LockFrom, ice from IceFrom, hidden colors from HiddenFrom, double strings from TwinFrom, wind from WindFrom.
+    public const int LockFrom = 11, IceFrom = 21, HiddenFrom = 31, TwinFrom = 41, WindFrom = 51;
 
     struct Specials
     {
-        public int ice, hidden, twins, windPairs;
+        public int locks, ice, hidden, twins, windPairs;
     }
 
     static Specials SpecialsFor(int level) => new Specials
     {
+        locks = level < LockFrom ? 0 : level < 60 ? 1 : 2,
         ice = level < IceFrom ? 0 : level < 35 ? 1 : level < 70 ? 2 : 3,
         hidden = level < HiddenFrom ? 0 : level < 60 ? 2 : 3,
         twins = level < TwinFrom ? 0 : level < 80 ? 1 : 2,
         windPairs = level < WindFrom ? 0 : level < 100 ? 1 : 2,
     };
 
+    // A gentle start: 2 kites, then 4, 6, 9, 12 and 15, with less luck allowed as the levels go on.
     static Settings For(int level)
     {
-        if (level <= 1) return new Settings { colors = 2, slots = 5, maxRandomWin = 1f }; // tutorial
-        if (level == 2) return new Settings { colors = 3, slots = 4, maxRandomWin = 0.6f };
-        if (level <= 4) return new Settings { colors = 4, slots = 4, maxRandomWin = 0.4f };
-        if (level <= 7) return new Settings { colors = 5, slots = 4, maxRandomWin = 0.3f };
-        if (level <= 11) return new Settings { colors = 5, slots = 4, maxRandomWin = 0.2f };
-        if (level <= 19) return new Settings { colors = 5, slots = 3, maxRandomWin = 0.12f };
-        return new Settings { colors = 5, slots = 3, maxRandomWin = 0.06f };
+        if (level <= 1) return new Settings { colors = 1, size = 2, slots = 0, maxRandomWin = 1f };  // 2 kites, 1 crossing
+        if (level == 2) return new Settings { colors = 2, size = 2, slots = 2, maxRandomWin = 1f };  // 4 kites: slots
+        if (level == 3) return new Settings { colors = 2, size = 3, slots = 3, maxRandomWin = 1f };  // 6 kites
+        if (level == 4) return new Settings { colors = 3, size = 3, slots = 3, maxRandomWin = 0.7f };  // 9 kites
+        if (level <= 6) return new Settings { colors = 3, size = 3, slots = 3, maxRandomWin = 0.5f };
+        if (level <= 9) return new Settings { colors = 4, size = 3, slots = 4, maxRandomWin = 0.4f };  // 12 kites
+        if (level <= 14) return new Settings { colors = 4, size = 3, slots = 3, maxRandomWin = 0.3f };
+        if (level <= 19) return new Settings { colors = 5, size = 3, slots = 4, maxRandomWin = 0.2f };  // 15 kites
+        if (level <= 29) return new Settings { colors = 5, size = 3, slots = 3, maxRandomWin = 0.12f };
+        return new Settings { colors = 5, size = 3, slots = 3, maxRandomWin = 0.06f };
     }
+
+    // Levels from here on reject layouts that the "obvious" play already wins.
+    const int ObviousFilterFrom = 5;
 
     public static LevelDefs.LevelData Generate(int level)
     {
         var settings = For(level);
-        int kiteCount = settings.colors * PuzzleModel.ChhatSize;
+        int kiteCount = settings.colors * settings.size;
 
         // Keep the hardest solvable layout seen. If none is solvable with this many slots, allow one more.
         // This always ends: with a slot per kite every layout is solvable (the top-most string is never covered).
@@ -60,10 +69,11 @@ public static class LevelGenerator
             for (int attempt = 0; attempt < AttemptsPerSlotCount; attempt++)
             {
                 var rng = new System.Random(level * 7919 + slots * 104729 + attempt);
-                var data = Build(level, kiteCount, settings.colors, slots, rng,
+                var data = Build(level, kiteCount, settings.colors, settings.size, slots, rng,
                     new System.Random(level * 6271 + slots * 337 + attempt * 13));
+                if (!HasCrossing(data)) continue; // every level needs at least one string lying on another
                 if (PuzzleModel.Solve(new PuzzleModel(data)) == null) continue;
-                if (level >= 3 && ObviousPlayWins(data)) continue;
+                if (level >= ObviousFilterFrom && ObviousPlayWins(data)) continue;
 
                 float win = RandomWinRate(data, new System.Random(level * 31 + attempt));
                 if (win < bestWin) { best = data; bestWin = win; }
@@ -71,6 +81,12 @@ public static class LevelGenerator
             }
             if (best != null) return best;
         }
+    }
+
+    static bool HasCrossing(LevelDefs.LevelData data)
+    {
+        foreach (int m in data.blockerMask) if (m != 0) return true;
+        return false;
     }
 
     // Plays the level many times, each time tapping a random kite that is untangled and has somewhere to go.
@@ -96,11 +112,11 @@ public static class LevelGenerator
     }
 
     // `special` is a separate random stream, so adding special kites never changed levels 1-20.
-    static LevelDefs.LevelData Build(int level, int kiteCount, int colorCount, int slots, System.Random rng, System.Random special)
+    static LevelDefs.LevelData Build(int level, int kiteCount, int colorCount, int size, int slots, System.Random rng, System.Random special)
     {
         var colorIds = new List<int>();
         for (int c = 0; c < colorCount; c++)
-        for (int i = 0; i < PuzzleModel.ChhatSize; i++)
+        for (int i = 0; i < size; i++)
             colorIds.Add(c);
         Shuffle(colorIds, rng);
 
@@ -154,8 +170,9 @@ public static class LevelGenerator
             blockerMask = blockerMask,
             queue = queue.ToArray(),
             slots = slots,
+            chhatSize = size,
         };
-        if (level >= IceFrom) AddSpecials(data, crossMask, specials, special);
+        if (level >= LockFrom) AddSpecials(data, crossMask, specials, special);
         return data;
     }
 
@@ -226,6 +243,26 @@ public static class LevelGenerator
             }
         }
         if (pairs.Count > 0) data.wind = pairs.ToArray();
+
+        // Lock & Key: lock a kite whose string is clear at the start (so the lock really matters),
+        // with a key kite that is neither hidden nor part of another pair.
+        var locks = new List<int>();
+        Shuffle(pool, rng);
+        int taken = 0;
+        foreach (int l in pool)
+        {
+            if (locks.Count / 2 >= specials.locks) break;
+            if (data.blockerMask[l] != 0 || (taken & (1 << l)) != 0) continue;
+            foreach (int k in pool)
+            {
+                if (k == l || (taken & (1 << k)) != 0 || (data.hidden & (1 << k)) != 0) continue;
+                locks.Add(k);
+                locks.Add(l);
+                taken |= (1 << k) | (1 << l);
+                break;
+            }
+        }
+        if (locks.Count > 0) data.locks = locks.ToArray();
     }
 
     // Random kite anchors in the upper part of the field, kept apart so kites don't overlap.

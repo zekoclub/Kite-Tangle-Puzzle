@@ -12,15 +12,18 @@ using System.Collections.Generic;
 // - Double string: both strings must be clear. The generator folds both into the kite's blockers.
 // - Wind: each time a chhat leaves the wind turns; while it blows, each wind pair swaps layers.
 //   It blows after an odd number of chhats, so the state still depends only on which kites are freed.
+// - Lock & Key: a locked kite can't fly until its key kite is freed (like a string lying on top of it).
 public class PuzzleModel
 {
-    public const int ChhatSize = 3;
+    public const int DefaultChhatSize = 3;
+    public readonly int ChhatSize; // kites per chhat in this level
 
     readonly int[] colors;
     readonly int[] calmBlockers, windBlockers; // windBlockers is null when the level has no wind
     readonly int[] calmLayers, windLayers;
     readonly int[] queue;
     readonly int hiddenMask;
+    readonly int[] keyOf;     // keyOf[k] = bit mask of the key kite(s) that unlock kite k (0 = not locked)
     int slotCount;
 
     public int FreedMask { get; private set; }
@@ -61,6 +64,10 @@ public class PuzzleModel
             windBlockers = BlockersFrom(level.crossMask, windLayers);
         }
         queue = level.queue;
+        ChhatSize = level.ChhatSize;
+        keyOf = new int[colors.Length];
+        if (level.locks != null)
+            for (int p = 0; p + 1 < level.locks.Length; p += 2) keyOf[level.locks[p + 1]] |= 1 << level.locks[p];
         slotCount = level.slots;
         IceMask = level.ice;
         hiddenMask = level.hidden;
@@ -78,6 +85,8 @@ public class PuzzleModel
         calmLayers = other.calmLayers;
         windLayers = other.windLayers;
         queue = other.queue;
+        ChhatSize = other.ChhatSize;
+        keyOf = other.keyOf;
         hiddenMask = other.hiddenMask;
         slotCount = other.slotCount;
         FreedMask = other.FreedMask;
@@ -109,8 +118,16 @@ public class PuzzleModel
     public int LayerOf(int k) => Windy ? windLayers[k] : calmLayers[k];
     public int BlockersOf(int k) => Blockers[k];
 
-    // No remaining string lies on top of this kite's string.
-    public bool IsUntangled(int k) => !IsFreed(k) && (Blockers[k] & ~FreedMask) == 0;
+    // Locked: its key kite is still in the sky.
+    public bool IsLocked(int k) => (keyOf[k] & ~FreedMask) != 0;
+    public bool IsKey(int k) { foreach (int m in keyOf) if ((m & (1 << k)) != 0) return true; return false; }
+    public int KeysOf(int k) => keyOf[k];
+
+    // No remaining string lies on top of this kite's string (the lock doesn't matter here).
+    public bool IsClear(int k) => !IsFreed(k) && (Blockers[k] & ~FreedMask) == 0;
+
+    // Can fly: its string is clear and it isn't locked.
+    public bool IsUntangled(int k) => IsClear(k) && !IsLocked(k);
 
     public bool CanPlace(int k) => colors[k] == ActiveColor || Slots.Count < slotCount;
 
@@ -160,7 +177,7 @@ public class PuzzleModel
     {
         if (hiddenMask == 0) return;
         for (int k = 0; k < colors.Length; k++)
-            if ((hiddenMask & (1 << k)) != 0 && (IsFreed(k) || IsUntangled(k))) RevealedMask |= 1 << k;
+            if ((hiddenMask & (1 << k)) != 0 && (IsFreed(k) || IsClear(k))) RevealedMask |= 1 << k;
     }
 
     // Returns a winning sequence of kites to free from this state, or null if there is none.

@@ -209,6 +209,35 @@ public static class LogicTests
         before.KeepSlots(undo.SlotCount);
         Check(before.SlotCount == 2 && !before.IsFreed(3), "undo puts the state back and keeps the bought slot");
 
+        // Lock & Key: red kite 2 is locked by blue kite 4. Its string is clear, but it can't fly until 4 is freed.
+        var locked = HandMade(1);
+        locked.locks = new[] { 4, 2 };
+        m = new PuzzleModel(locked);
+        Check(m.IsClear(2) && m.IsLocked(2) && !m.IsUntangled(2), "a locked kite with a clear string can't fly");
+        Check(m.IsKey(4) && !m.IsKey(2) && m.KeysOf(2) == 1 << 4, "the key kite is known");
+        m.Free(4); // blue key waits in the slot
+        Check(!m.IsLocked(2) && m.IsUntangled(2), "freeing the key opens the lock");
+        Check(PuzzleModel.Solve(new PuzzleModel(locked)) != null, "a lock & key level is solvable");
+        var deadLock = HandMade(0);
+        deadLock.locks = new[] { 4, 2 }; // no slot for the blue key while red is active, and red needs kite 2
+        Check(PuzzleModel.Solve(new PuzzleModel(deadLock)) == null, "the solver respects locks");
+        var hiddenLocked = HandMade(1);
+        hiddenLocked.locks = new[] { 4, 1 };
+        hiddenLocked.hidden = 1 << 1;
+        Check(!new PuzzleModel(hiddenLocked).IsHidden(1), "a lock doesn't hide a color: only strings do");
+
+        // Small chhats: the first level has 2 kites and one chhat of 2.
+        var tiny = new LevelDefs.LevelData
+        {
+            number = 0, chhatSize = 2, queue = new[] { 0 }, slots = 0, blockerMask = new[] { 1 << 1, 0 },
+            kites = new[] { new LevelDefs.KiteDef { colorId = 0, layer = 0 }, new LevelDefs.KiteDef { colorId = 0, layer = 1 } },
+        };
+        m = new PuzzleModel(tiny);
+        Check(m.ChhatSize == 2 && !m.IsUntangled(0) && m.IsUntangled(1), "2-kite level: the top kite is free");
+        m.Free(1); m.Free(0);
+        Check(m.Won, "a chhat of 2 leaves with 2 kites");
+        Check(new PuzzleModel(HandMade(1)).ChhatSize == 3, "older levels keep chhats of 3");
+
         // Cut: a tangled kite can be freed (the board skips the untangled check).
         var cut = new PuzzleModel(HandMade(1));
         cut.Free(0);
@@ -299,10 +328,22 @@ public static class LogicTests
             if (ms > slowest) { slowest = ms; slowestLevel = n; }
 
             Check(level.number == n, $"L{n}: number");
-            Check(level.kites.Length == level.queue.Length * PuzzleModel.ChhatSize, $"L{n}: 3 kites per chhat");
+            Check(level.kites.Length == level.queue.Length * level.ChhatSize, $"L{n}: a full chhat of kites per color");
             Check(level.kites.Length <= 31, $"L{n}: fits the 32-bit masks");
             foreach (int color in level.queue)
-                Check(level.kites.Count(k => k.colorId == color) == PuzzleModel.ChhatSize, $"L{n}: 3 kites of color {color}");
+                Check(level.kites.Count(k => k.colorId == color) == level.ChhatSize, $"L{n}: {level.ChhatSize} kites of color {color}");
+            Check(level.blockerMask.Any(m => m != 0), $"L{n}: at least one string lies on another");
+            if (n == 1) Check(level.kites.Length == 2 && level.queue.Length == 1, "L1: two kites, one chhat");
+            if (n == 2) Check(level.kites.Length == 4, "L2: four kites");
+            if (n == 3) Check(level.kites.Length == 6, "L3: six kites");
+            bool hasLocks = level.locks != null && level.locks.Length > 0;
+            Check(hasLocks == (n >= LevelGenerator.LockFrom), $"L{n}: lock & key from level {LevelGenerator.LockFrom}");
+            if (hasLocks)
+            {
+                Check(level.locks.Length % 2 == 0 && level.locks.Distinct().Count() == level.locks.Length, $"L{n}: lock pairs are separate kites");
+                for (int p = 0; p + 1 < level.locks.Length; p += 2)
+                    Check(level.blockerMask[level.locks[p + 1]] == 0, $"L{n}: the locked kite starts clear, so the lock matters");
+            }
             Check(level.queue.Distinct().Count() == level.queue.Length, $"L{n}: one chhat per color");
             Check(level.kites.Select(k => k.layer).Distinct().Count() == level.kites.Length, $"L{n}: layers are unique");
             for (int k = 0; k < level.kites.Length; k++)
@@ -348,8 +389,8 @@ public static class LogicTests
     }
 
     static bool SameRules(LevelDefs.LevelData a, LevelDefs.LevelData b) =>
-        a.slots == b.slots && a.queue.SequenceEqual(b.queue) && a.blockerMask.SequenceEqual(b.blockerMask) &&
-        a.ice == b.ice && a.hidden == b.hidden && (a.wind ?? new int[0]).SequenceEqual(b.wind ?? new int[0]) &&
+        a.slots == b.slots && a.ChhatSize == b.ChhatSize && a.queue.SequenceEqual(b.queue) && a.blockerMask.SequenceEqual(b.blockerMask) &&
+        (a.locks ?? new int[0]).SequenceEqual(b.locks ?? new int[0]) && a.ice == b.ice && a.hidden == b.hidden && (a.wind ?? new int[0]).SequenceEqual(b.wind ?? new int[0]) &&
         a.kites.Select(k => k.twin).SequenceEqual(b.kites.Select(k => k.twin)) &&
         a.kites.Select(k => (k.colorId, k.layer)).SequenceEqual(b.kites.Select(k => (k.colorId, k.layer))) &&
         a.kites.Zip(b.kites, (x, y) => (x.anchor - y.anchor).sqrMagnitude + (x.spool - y.spool).sqrMagnitude).All(d => d < 1e-8f);

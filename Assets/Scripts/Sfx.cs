@@ -7,7 +7,7 @@ using UnityEngine;
 // thread so startup doesn't wait for it. Settings > Music turns it off.
 public class Sfx : MonoBehaviour
 {
-    public enum Sound { Click, Free, Dock, ChhatDone, Wrong, Win, Lose, Coin, Crack, Wind, Cut, Undo, Freeze, BoKata, Purchase }
+    public enum Sound { Click, Free, Dock, ChhatDone, Wrong, Win, Lose, Coin, Crack, Wind, Cut, Undo, Freeze, BoKata, Purchase, Unlock }
 
     static Sfx instance;
     AudioSource source, music;
@@ -74,6 +74,7 @@ public class Sfx : MonoBehaviour
             Chord("freeze", new[] { 1568f, 1319f, 1760f }, 0.07f),
             BoKata(),
             Chord("purchase", new[] { 784f, 988f, 1175f, 1568f }, 0.09f),
+            Chord("unlock", new[] { 1175f, 1568f }, 0.08f), // the padlock clicks open
         };
         musicTask = Task.Run(BuildMusic);
     }

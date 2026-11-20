@@ -1,6 +1,6 @@
 using UnityEngine;
 
-// A colored rooftop with ChhatSize dock spots for kites. Glides to wherever the board sends it.
+// A colored rooftop with one dock spot per kite it takes (2 or 3). Glides to wherever the board sends it.
 public class ChhatView : MonoBehaviour
 {
     public const float Width = 2.0f;   // world width at scale 1
@@ -12,7 +12,7 @@ public class ChhatView : MonoBehaviour
     float targetScale = 1f;
     float delay;
 
-    public void Init(int colorId)
+    public void Init(int colorId, int size)
     {
         var roof = new GameObject("Rooftop").AddComponent<SpriteRenderer>();
         roof.transform.SetParent(transform, false);
@@ -25,7 +25,7 @@ public class ChhatView : MonoBehaviour
         float emptyScale = Art.ScaleForWidth(empty, Kite.DockWidth);
         float dockY = -empty.bounds.size.y * emptyScale * 0.5f + (-empty.bounds.min.y) * emptyScale;
 
-        Docks = new Transform[PuzzleModel.ChhatSize];
+        Docks = new Transform[size];
         for (int i = 0; i < Docks.Length; i++)
         {
             var dock = new GameObject($"Dock_{i}").transform;

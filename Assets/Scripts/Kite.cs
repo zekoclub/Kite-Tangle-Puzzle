@@ -35,6 +35,8 @@ public class Kite : MonoBehaviour
     readonly List<SpriteRenderer> spools = new();
     Transform body;
     SpriteRenderer bodyRenderer, shadowRenderer, skinRenderer, iceRenderer;
+    SpriteRenderer badgeBack, badgeIcon; // lock or key badge
+    bool locked, isKeyBadge;
     LineRenderer streamer;
     Collider2D bodyCollider;
     int colorId;
@@ -50,7 +52,12 @@ public class Kite : MonoBehaviour
     {
         public bool iced, hidden, wind;
         public Sprite skin; // null = classic
+        public int lockPair, keyPair; // Lock & Key: pair number + 1 (0 = none); the pair number picks the badge color
     }
+
+    // Badge colors per key pair: gold, then teal.
+    static readonly Color[] PairColors = { Art.Hex("E0A11B"), Art.Hex("2C9C9A") };
+    public static Color PairColor(int pair) => PairColors[pair % PairColors.Length];
 
     public void Init(int id, LevelDefs.KiteDef def, Func<Vector2, Vector2> toWorld, float spoolWidth, Look look)
     {
@@ -80,6 +87,9 @@ public class Kite : MonoBehaviour
         if (look.skin != null) skinRenderer = Overlay("Skin", look.skin);
         iceRenderer = Overlay("Ice", Art.Load("kites/kite_ice"));
         iceRenderer.enabled = look.iced;
+        if (look.lockPair > 0) AddBadge("ui/badge_lock", look.lockPair - 1);
+        else if (look.keyPair > 0) { AddBadge("ui/badge_key", look.keyPair - 1); isKeyBadge = true; }
+        locked = look.lockPair > 0;
 
         // Generous tap area for fingers, centered on the diamond (in sprite space).
         var circle = body.gameObject.AddComponent<CircleCollider2D>();
@@ -105,6 +115,62 @@ public class Kite : MonoBehaviour
         hidden = look.hidden;
         SetColors();
         SetLayer(Layer);
+    }
+
+    // A round colored badge with a white lock or key, on the kite's upper right (in world size, not sprite size).
+    void AddBadge(string icon, int pair)
+    {
+        var holder = new GameObject("Badge").transform;
+        holder.SetParent(body, false);
+        float diameter = SkyWidth * 0.8f;
+        var sprite = bodyRenderer.sprite;
+        holder.localPosition = new Vector3(sprite.bounds.size.x * 0.42f, sprite.bounds.size.y * 0.62f, 0f);
+        holder.localScale = Vector3.one / skyScale.x;
+
+        badgeBack = new GameObject("Back").AddComponent<SpriteRenderer>();
+        badgeBack.transform.SetParent(holder, false);
+        badgeBack.sprite = SpriteFactory.Circle;
+        badgeBack.transform.localScale = Vector3.one * Art.ScaleForWidth(badgeBack.sprite, diameter);
+        badgeBack.color = PairColor(pair);
+
+        badgeIcon = new GameObject("Icon").AddComponent<SpriteRenderer>();
+        badgeIcon.transform.SetParent(holder, false);
+        badgeIcon.sprite = Art.Load(icon);
+        badgeIcon.transform.localScale = Vector3.one * Art.ScaleForWidth(badgeIcon.sprite, diameter * 0.66f);
+    }
+
+    // The key kite was freed (or Undo put it back): the padlock opens or closes.
+    public void SetLocked(bool value)
+    {
+        if (badgeIcon == null || locked == value) return;
+        locked = value;
+        if (value)
+        {
+            badgeBack.enabled = badgeIcon.enabled = true;
+            badgeIcon.sprite = Art.Load("ui/badge_lock");
+        }
+        else StartCoroutine(Unlock());
+    }
+
+    IEnumerator Unlock()
+    {
+        badgeIcon.sprite = Art.Load("ui/badge_open");
+        var holder = badgeBack.transform.parent;
+        Vector3 start = holder.localScale;
+        yield return new WaitForSeconds(0.45f);
+        for (float t = 0; t < 0.3f && !locked; t += Time.deltaTime)
+        {
+            float k = t / 0.3f;
+            holder.localScale = start * (1f + 0.4f * k);
+            badgeBack.color = new Color(badgeBack.color.r, badgeBack.color.g, badgeBack.color.b, 1f - k);
+            badgeIcon.color = new Color(1f, 1f, 1f, 1f - k);
+            yield return null;
+        }
+        holder.localScale = start;
+        badgeBack.color = new Color(badgeBack.color.r, badgeBack.color.g, badgeBack.color.b, 1f);
+        badgeIcon.color = Color.white;
+        if (!locked) badgeBack.enabled = badgeIcon.enabled = false;
+        else badgeIcon.sprite = Art.Load("ui/badge_lock");
     }
 
     SpriteRenderer Overlay(string name, Sprite sprite)
@@ -174,6 +240,7 @@ public class Kite : MonoBehaviour
         shadowRenderer.sortingOrder = order - 1;
         if (skinRenderer != null) skinRenderer.sortingOrder = order + 1;
         iceRenderer.sortingOrder = order + 2;
+        if (badgeBack != null) { badgeBack.sortingOrder = order + 3; badgeIcon.sortingOrder = order + 4; }
         if (streamer != null) streamer.sortingOrder = order - 2;
     }
 
@@ -234,6 +301,7 @@ public class Kite : MonoBehaviour
             if (flashRoutine != null) StopCoroutine(flashRoutine);
             iceRenderer.enabled = false;
             if (streamer != null) streamer.enabled = false;
+            if (badgeBack != null) badgeBack.enabled = badgeIcon.enabled = false;
             SetBodyOrder(DockedOrder);
             releaseRoutine = StartCoroutine(ReleaseString());
         }
@@ -250,6 +318,7 @@ public class Kite : MonoBehaviour
         body.SetParent(transform, true);
         bodyCollider.enabled = true;
         if (streamer != null) streamer.enabled = true;
+        if (badgeBack != null && (isKeyBadge || locked)) badgeBack.enabled = badgeIcon.enabled = true;
         foreach (var s in strings)
         {
             foreach (var line in s) line.enabled = true;
@@ -343,6 +412,40 @@ public class Kite : MonoBehaviour
             yield return null;
         }
         if (!docked) body.localScale = skyScale;
+    }
+
+    // A little bounce, e.g. on the key kite when its locked kite was tapped.
+    public void Nudge()
+    {
+        if (!docked) StartCoroutine(Pulse(0.35f, 0.35f));
+    }
+
+    // First level: a bouncing arrow above the kite that says "tap me". Gone once the kite flies.
+    GameObject tapArrow;
+
+    public void ShowTapArrow(bool show)
+    {
+        if (!show) { if (tapArrow != null) Destroy(tapArrow); tapArrow = null; return; }
+        if (tapArrow != null || docked) return;
+        tapArrow = new GameObject("TapArrow");
+        tapArrow.transform.SetParent(transform, false);
+        var sr = tapArrow.AddComponent<SpriteRenderer>();
+        sr.sprite = Art.Load("ui/tap_arrow");
+        sr.sortingOrder = 251; // above the hint ring
+        tapArrow.transform.localScale = Vector3.one * Art.ScaleForWidth(sr.sprite, SkyWidth * 1.1f);
+        StartCoroutine(BobArrow(sr));
+    }
+
+    IEnumerator BobArrow(SpriteRenderer arrow)
+    {
+        float top = bodyRenderer.bounds.max.y + arrow.bounds.size.y * 0.5f + 0.05f;
+        for (float t = 0; arrow != null && !docked; t += Time.deltaTime)
+        {
+            arrow.transform.position = new Vector3(bodyRenderer.bounds.center.x, top + Mathf.Abs(Mathf.Sin(t * 4f)) * 0.22f, 0f);
+            yield return null;
+        }
+        if (arrow != null) Destroy(arrow.gameObject);
+        tapArrow = null;
     }
 
     // Blink this string white so the player sees what is lying on top.

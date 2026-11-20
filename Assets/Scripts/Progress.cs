@@ -18,6 +18,8 @@ public static class Progress
     const string NoAdsKey = "no_ads";       // 1 once "Remove Ads" was bought (Purchases.cs)
     const string FreeDayKey = "free_day";   // with No Ads: day number and count of free rewards claimed that day
     const string FreeCountKey = "free_n";
+    const string AutoBackupKey = "auto_backup"; // 1 = progress is backed up to Google Play by itself (default on)
+    const string LastBackupKey = "last_backup"; // unix seconds of the last successful backup
     const string SignatureKey = "sig";  // checksum of level, coins, hints, stats, boosters, skins and No Ads
     const string SignatureVersionKey = "sig_v"; // what the checksum covers: 1 = level/coins/hints, 2 = + stats, 3 = + boosters, skins, No Ads
     const int SignatureVersion = 3;
@@ -45,6 +47,24 @@ public static class Progress
     public static bool Vibration { get => PlayerPrefs.GetInt(VibrationKey, 1) == 1; set => SetInt(VibrationKey, value ? 1 : 0); }
     public static bool Music { get => PlayerPrefs.GetInt(MusicKey, 1) == 1; set => SetInt(MusicKey, value ? 1 : 0); }
     public static bool NoAds => PlayerPrefs.GetInt(NoAdsKey, 0) == 1;
+    public static bool AutoBackup { get => PlayerPrefs.GetInt(AutoBackupKey, 1) == 1; set => SetInt(AutoBackupKey, value ? 1 : 0); }
+
+    // Last successful cloud backup (local time), or null if there hasn't been one on this phone.
+    public static DateTime? LastBackup
+    {
+        get
+        {
+            long s = long.TryParse(PlayerPrefs.GetString(LastBackupKey, ""), out long v) ? v : 0;
+            return s > 0 ? DateTimeOffset.FromUnixTimeSeconds(s).LocalDateTime : null;
+        }
+    }
+
+    // Not a Changed event: a backup finishing must not trigger another upload.
+    public static void MarkBackedUp()
+    {
+        PlayerPrefs.SetString(LastBackupKey, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+        PlayerPrefs.Save();
+    }
 
     public static int Boosters(Booster b) => PlayerPrefs.GetInt(BoosterKeys[(int)b], StartingBoosters);
     public static void AddBoosters(Booster b, int amount) => SetInt(BoosterKeys[(int)b], Boosters(b) + amount);

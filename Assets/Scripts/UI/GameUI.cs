@@ -25,10 +25,11 @@ public partial class GameUI : MonoBehaviour
     static readonly string[] BoosterIcons = { Icon.Undo, Icon.Cut, Icon.Freeze };
     static readonly string[] BoosterInfo =
     {
-        "Take back your last move.", "Cut any patang loose, even a tangled one.", "Tangled taps cost no hearts for the rest of this level.",
+        "Take back your last move.", "Cut any kite loose, even a tangled one.", "Tangled taps cost no hearts for the rest of this level.",
     };
     static readonly Color Icy = Art.Hex("6FB9E8");
-    const int TutorialLevels = 2;          // free idle hints on these levels
+    const int TutorialLevels = 3;          // free idle hints on these levels
+    public const int BoostersFrom = 5;     // Undo, Cut and Freeze show from this level; before it the HUD has Hint + Restart only
     const float TutorialIdleSeconds = 5f;
 
     static readonly Color Dim = new Color(Art.Ink.r, Art.Ink.g, Art.Ink.b, 0.6f);
@@ -38,35 +39,34 @@ public partial class GameUI : MonoBehaviour
     TangleBoard board;
     RectTransform root, safe;
 
-    // "How to play" cards: shown once before levels 1-3, and all together from the Pause help button (key 0).
+    // "How to play" cards: short, one idea each, shown once on the level that brings it in; all of them from Pause help (key 0).
     static readonly Dictionary<int, (string icon, string title, string body)> Lessons = new()
     {
-        [1] = (Icon.Info, "How to play",
-            "Strings cross. Tap a patang whose dor lies ON TOP of every string it crosses: it flies to the chhat of its color.\n\n" +
-            "Tap one that is still tangled and you lose a heart."),
-        [2] = (Icon.AddSlot, "Waiting slots",
-            "Wrong color for this chhat? The patang waits in a slot. When its chhat arrives, it flies there by itself.\n\n" +
-            "If every slot is full, only a patang of the chhat's color fits!"),
-        [3] = (Icon.Ad, "+1 FREE slot",
-            "Running out of room? Tap the locked +1 slot to open one more slot for this level: watch an ad or pay coins.\n\n" +
-            "Stuck? Hint shows the next good move."),
-        [5] = (Icon.Undo, "Boosters",
-            "Undo takes back your last move.\n\nCut frees any patang, even a tangled one.\n\n" +
-            "Freeze: tangled taps cost no hearts for the whole level.\n\nRun out? Watch an ad or pay coins."),
-        [LevelGenerator.IceFrom] = (Icon.Freeze, "Iced patang",
-            "Some kites are frozen in ice.\n\nTap an untangled iced kite once to crack the ice, then tap it again to free it."),
+        [1] = (Icon.Info, "Tap the top kite",
+            "Two strings cross.\n\nTap the kite whose string is ON TOP. It flies to its rooftop.\n\nFollow the arrow!"),
+        [2] = (Icon.AddSlot, "Colors and slots",
+            "Each kite flies to the rooftop of its own color.\n\nWrong color right now? It waits in a slot until its rooftop comes."),
+        [3] = (Icon.Info, "Hearts",
+            "Tap a kite whose string is UNDER another one and you lose a heart.\n\nLose all 3 hearts and you try again."),
+        [TangleBoard.BonusSlotFrom] = (Icon.Ad, "+1 FREE slot",
+            "Running out of slots? Tap the +1 slot for one more: watch an ad or pay coins.\n\nStuck? Hint shows a good move."),
+        [BoostersFrom] = (Icon.Undo, "Boosters",
+            "Undo: take back a move.\n\nCut: free any kite, even a tangled one.\n\nFreeze: no hearts lost this level."),
+        [LevelGenerator.LockFrom] = (Icon.Lock, "Lock and key",
+            "A kite with a lock can't fly yet.\n\nFree the kite with the key first. Then the lock opens and the kite can fly!"),
+        [LevelGenerator.IceFrom] = (Icon.Freeze, "Iced kite",
+            "Tap an iced kite once to crack the ice.\n\nTap it again to free it."),
         [LevelGenerator.HiddenFrom] = (Icon.Help, "Hidden colors",
-            "A gray ? patang hides its color.\n\nClear every string lying on its dor and its color shows."),
-        [LevelGenerator.TwinFrom] = (Icon.Info, "Double dor",
-            "Some patangs fly on two strings from two charkhis.\n\nBoth strings must be clear before you can free it."),
-        [LevelGenerator.WindFrom] = (Icon.Wind, "Hawa (wind)",
-            "Kites with a white streamer swap places when the wind turns.\n\nThe wind turns each time a chhat leaves, so plan ahead!"),
+            "A gray ? kite hides its color.\n\nClear the strings on top of it and its color shows."),
+        [LevelGenerator.TwinFrom] = (Icon.Info, "Double string",
+            "Some kites fly on two strings.\n\nBoth strings must be clear to free it."),
+        [LevelGenerator.WindFrom] = (Icon.Wind, "Wind",
+            "Kites with a white tail swap places when the wind turns.\n\nThe wind turns each time a rooftop leaves."),
         [0] = (Icon.Info, "How to play",
-            "Tap a patang whose dor lies on top of every string it crosses. Tangled tap = lose a heart.\n\n" +
-            "It flies to the chhat of its color, or waits in a slot. A chhat leaves with 3 kites and the next one takes its kites from the slots.\n\n" +
-            "All slots full and the wrong color = No Space! Use the +1 slot, Hint and the boosters.\n\n" +
-            "Special kites: ice cracks on the first tap, gray ? kites show their color once clear, " +
-            "double-string kites need both strings clear, and streamer kites swap when the wind turns."),
+            "Tap a kite whose string is on top. A covered kite costs a heart.\n\n" +
+            "It flies to the rooftop of its color, or waits in a slot. A full rooftop leaves and the next one comes.\n\n" +
+            "Lock: free the key kite first. Ice: tap twice. Gray ?: clear it to see its color. " +
+            "Two strings: both must be clear. White tail: swaps when the wind turns."),
     };
 
     // Screens and popups.
@@ -79,8 +79,10 @@ public partial class GameUI : MonoBehaviour
     readonly List<Text> coinLabels = new();
     Text playLabel, hudLevel, hudTip, hintBadge, winTitleLevel, winCoins, winRating, loseIcon, loseTitle, loseMessage, toastText;
     Text[] hearts, winStars;
-    Button continueButton, continueCoinsButton, resetButton, privacyButton, cloudButton;
+    Button continueButton, continueCoinsButton, resetButton, privacyButton, cloudButton, autoBackupButton, backupNowButton;
+    Text backupInfo;
     Button[] boosterButtons;
+    Button hintButton, restartButton;
     Text[] boosterBadges;
     Text offerIcon, offerTitle, offerBody;
     Button offerAd, offerCoins;
@@ -134,6 +136,9 @@ public partial class GameUI : MonoBehaviour
         board.BonusSlotTapped += OnBonusSlotTapped;
         board.CutDone += OnCutDone;
         board.WindTurned += OnWindTurned;
+        board.LockedTapped += OnLockedTapped;
+        board.TangledTapped += OnTangledTapped;
+        board.Unlocked += OnUnlocked;
         Progress.Changed += RefreshProgress;
         RefreshProgress();
         ShowHome();
@@ -153,6 +158,9 @@ public partial class GameUI : MonoBehaviour
             board.BonusSlotTapped -= OnBonusSlotTapped;
             board.CutDone -= OnCutDone;
             board.WindTurned -= OnWindTurned;
+            board.LockedTapped -= OnLockedTapped;
+            board.TangledTapped -= OnTangledTapped;
+            board.Unlocked -= OnUnlocked;
         }
     }
 
@@ -424,9 +432,9 @@ public partial class GameUI : MonoBehaviour
         }
 
         var tipChip = Img(hud, "TipChip", Art.Load("ui/button_secondary"), Chip, sliced: true);
-        tipChip.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -142f), new Vector2(760f, 48f), new Vector2(0.5f, 1f));
-        tipChip.pixelsPerUnitMultiplier = SlicePpu * 2.2f;
-        hudTip = Label(tipChip.transform, "", 32, Art.Ink, Art.Body);
+        tipChip.rectTransform.At(new Vector2(0.5f, 1f), new Vector2(0f, -144f), new Vector2(900f, 68f), new Vector2(0.5f, 1f));
+        tipChip.pixelsPerUnitMultiplier = SlicePpu * 1.6f;
+        hudTip = Label(tipChip.transform, "", 40, Art.Ink, Art.Body);
         hudTip.rectTransform.Fill(0, 2, 0, 0);
 
         // Bottom row: Undo, Cut, Hint, Freeze, Restart.
@@ -438,8 +446,20 @@ public partial class GameUI : MonoBehaviour
             var booster = (Progress.Booster)b;
             boosterButtons[b] = BarButton(Style.Secondary, BoosterNames[b], BoosterIcons[b], boosterX[b], () => OnBooster(booster), out boosterBadges[b]);
         }
-        BarButton(Style.Primary, "Hint", Icon.Hint, 0f, OnHint, out hintBadge);
-        BarButton(Style.Secondary, "Restart", Icon.Restart, 416f, () => StartCoroutine(LoadLevel(board.LevelNumber)), out _, withBadge: false);
+        hintButton = BarButton(Style.Primary, "Hint", Icon.Hint, 0f, OnHint, out hintBadge);
+        restartButton = BarButton(Style.Secondary, "Restart", Icon.Restart, 416f, () => StartCoroutine(LoadLevel(board.LevelNumber)), out _, withBadge: false);
+    }
+
+    // Early levels keep the bottom row simple: only Hint and Restart, side by side. The boosters come in at BoostersFrom.
+    void LayoutBar()
+    {
+        bool boosters = board.LevelNumber >= BoostersFrom;
+        foreach (var b in boosterButtons) b.gameObject.SetActive(boosters);
+        float hx = boosters ? 0f : -120f, rx = boosters ? 416f : 120f;
+        var h = hintButton.GetComponent<RectTransform>();
+        h.anchoredPosition = new Vector2(hx, h.anchoredPosition.y);
+        var r = restartButton.GetComponent<RectTransform>();
+        r.anchoredPosition = new Vector2(rx, r.anchoredPosition.y);
     }
 
     // A square HUD button with the icon on top, a small caption under it and a count badge.
@@ -464,6 +484,7 @@ public partial class GameUI : MonoBehaviour
     {
         if (board.State == TangleBoard.GameState.Idle) return;
         hudLevel.text = $"Level {board.LevelNumber}";
+        LayoutBar();
         for (int i = 0; i < hearts.Length; i++)
             hearts[i].color = i >= board.Hearts ? new Color(Art.Ink.r, Art.Ink.g, Art.Ink.b, 0.18f) : board.Frozen ? Icy : Art.Danger;
         RefreshBoosters();
@@ -480,7 +501,7 @@ public partial class GameUI : MonoBehaviour
         else if (board.Stuck)
             hudTip.text = board.BonusSlotAvailable ? "Stuck! Try Undo, the +1 slot or Restart" : "No way out! Undo, Cut or Restart";
         else if (board.LevelNumber > 3 && board.SlotsFree == 0)
-            hudTip.text = "Slots full! Only a matching patang fits";
+            hudTip.text = "Slots full! Only the rooftop's color fits";
         else if (board.LevelNumber > 3 && board.SlotsFree == 1)
             hudTip.text = "Careful: 1 slot left!";
         else
@@ -488,16 +509,18 @@ public partial class GameUI : MonoBehaviour
             warn = false;
             hudTip.text = board.LevelNumber switch
             {
-                1 => "Tap a kite whose dor lies on top of the others",
-                2 => "Wrong color? The patang waits in a slot",
-                3 => "Tap the +1 FREE slot for an extra slot",
-                5 => "New: Undo, Cut and Freeze boosters below",
+                1 => "Tap the kite the arrow shows",
+                2 => "Wrong color? It waits in a slot",
+                3 => "Tap only kites with nothing on top",
+                TangleBoard.BonusSlotFrom => "Need room? Tap the +1 slot",
+                BoostersFrom => "New! Undo, Cut and Freeze below",
+                LevelGenerator.LockFrom => "Free the key kite to open the lock",
                 LevelGenerator.IceFrom => "Iced kite: tap once to crack, again to free",
-                LevelGenerator.HiddenFrom => "Gray kite? Its color shows once its dor is clear",
-                LevelGenerator.TwinFrom => "Double dor: clear both strings to free it",
-                _ when board.Windy => "Hawa! Streamer kites have swapped",
-                LevelGenerator.WindFrom => "Streamer kites swap when a chhat leaves",
-                _ => board.ChhatsLeft == 1 ? "Last chhat!" : $"{board.ChhatsLeft} chhats left",
+                LevelGenerator.HiddenFrom => "Gray kite? Clear it to see its color",
+                LevelGenerator.TwinFrom => "Two strings: clear both to free it",
+                _ when board.Windy => "Wind! White-tail kites have swapped",
+                LevelGenerator.WindFrom => "White-tail kites swap when a rooftop leaves",
+                _ => board.ChhatsLeft == 1 ? "Last rooftop!" : $"{board.ChhatsLeft} rooftops left",
             };
         }
         hudTip.color = warn ? Art.Danger : Art.Ink;
@@ -585,7 +608,16 @@ public partial class GameUI : MonoBehaviour
         else Toast("No room for that kite. Pick another");
     }
 
-    void OnWindTurned() => Toast("Hawa! The wind swapped the streamer kites");
+    void OnWindTurned() => Toast("Wind! The white-tail kites swapped");
+    void OnLockedTapped() => Toast("Locked! Free the key kite first");
+    void OnUnlocked() => Toast("Unlocked!");
+
+    // Early levels explain a wrong tap in words.
+    void OnTangledTapped()
+    {
+        if (board.LevelNumber <= 3) Toast(board.LevelNumber <= TangleBoard.ForgivingLevels
+            ? "That string is under the other one. Follow the arrow!" : "That string is under another one");
+    }
 
     // Counts on the booster buttons; buttons that can't do anything right now are faded.
     void RefreshBoosters()
@@ -808,8 +840,8 @@ public partial class GameUI : MonoBehaviour
         loseIcon.text = noSpace ? Icon.AddSlot : Icon.HeartBroken;
         loseTitle.text = noSpace ? "No Space!" : "Try Again";
         loseMessage.text = noSpace
-            ? "Every slot is full and that patang doesn't match the chhat."
-            : "You tapped a patang whose dor was still tangled. Out of hearts!";
+            ? "Every slot is full and that kite doesn't match the rooftop."
+            : "That kite's string was under another one. Out of hearts!";
         continueButton.gameObject.SetActive(!board.UsedContinue);
         continueCoinsButton.gameObject.SetActive(!board.UsedContinue);
         LabelOf(continueButton).text = (noSpace ? "+1 Slot" : "Refill Hearts") + (FreeReward ? ": Free" : "");
@@ -873,6 +905,38 @@ public partial class GameUI : MonoBehaviour
             else CloudSave.SignIn();
         });
         cloudButton.gameObject.SetActive(false);
+
+        // Backup: Auto backup on/off and Back up now, side by side, with the last backup time under them.
+        autoBackupButton = OnCardButton(card, "Auto backup: On", Icon.CloudDone, 44, () =>
+        {
+            Progress.AutoBackup = !Progress.AutoBackup;
+            if (Progress.AutoBackup) { CloudSave.Push(force: true); Toast("Auto backup on: your progress saves by itself"); }
+            else Toast("Auto backup off. Use Back up now to save");
+            RefreshSettings();
+        });
+        backupNowButton = OnCardButton(card, "Back up now", Icon.Cloud, 44, () =>
+        {
+            LabelOf(backupNowButton).text = "Backing up...";
+            CloudSave.BackUpNow(ok =>
+            {
+                Toast(ok ? "Backed up to Google Play" : CloudSave.SignedIn ? "Backup didn't work. Try again" : "Sign in to Google Play first");
+                RefreshSettings();
+            });
+        });
+        backupInfo = Label(card, "", 32, Art.Muted, Art.Body);
+        autoBackupButton.gameObject.SetActive(false);
+        backupNowButton.gameObject.SetActive(false);
+        backupInfo.gameObject.SetActive(false);
+    }
+
+    static string Ago(System.DateTime? when)
+    {
+        if (when == null) return "Not backed up yet";
+        var span = System.DateTime.Now - when.Value;
+        if (span.TotalMinutes < 1) return "Last backup: just now";
+        if (span.TotalHours < 1) return $"Last backup: {(int)span.TotalMinutes} min ago";
+        if (span.TotalDays < 1) return $"Last backup: {(int)span.TotalHours} h ago";
+        return $"Last backup: {when.Value:d MMM}";
     }
 
     // The consent answer and the Google Play sign-in arrive after startup, so the optional rows
@@ -881,11 +945,30 @@ public partial class GameUI : MonoBehaviour
     {
         float y = 220f;
         bool cloud = CloudSave.Available;
-        cloudButton.gameObject.SetActive(cloud);
-        if (cloud)
+        bool backup = cloud && CloudSave.SignedIn;
+        autoBackupButton.gameObject.SetActive(backup);
+        backupNowButton.gameObject.SetActive(backup);
+        backupInfo.gameObject.SetActive(backup);
+        if (backup)
+        {
+            // Bottom up: last backup time, Back up now, Auto backup on/off. Signed in, so no sign-in row.
+            backupInfo.text = Ago(Progress.LastBackup);
+            backupInfo.rectTransform.At(new Vector2(0.5f, 0f), new Vector2(0f, y - 10f), new Vector2(620f, 50f), new Vector2(0.5f, 0f));
+            y += 46f;
+            backupNowButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, y), new Vector2(620f, 120f), new Vector2(0.5f, 0f));
+            LabelOf(backupNowButton).text = "Back up now";
+            y += 140f;
+            autoBackupButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, y), new Vector2(620f, 120f), new Vector2(0.5f, 0f));
+            LabelOf(autoBackupButton).text = Progress.AutoBackup ? "Auto backup: On" : "Auto backup: Off";
+            IconOf(autoBackupButton).text = Progress.AutoBackup ? Icon.CloudDone : Icon.Cloud;
+            IconOf(autoBackupButton).color = Progress.AutoBackup ? Art.Success : Art.Muted;
+            y += 150f;
+        }
+        cloudButton.gameObject.SetActive(cloud && !backup);
+        if (cloud && !backup)
         {
             cloudButton.GetComponent<RectTransform>().At(new Vector2(0.5f, 0f), new Vector2(0f, y), new Vector2(620f, 130f), new Vector2(0.5f, 0f));
-            LabelOf(cloudButton).text = CloudSave.SignedIn ? "Saved to Google Play" : "Sign in to save";
+            LabelOf(cloudButton).text = CloudSave.SignedIn ? "Signed in to Google Play" : "Sign in to back up";
             IconOf(cloudButton).text = CloudSave.SignedIn ? Icon.CloudDone : Icon.Cloud;
             y += 160f;
         }
@@ -986,7 +1069,7 @@ public partial class GameUI : MonoBehaviour
                 Toast($"+{BoosterPack} {BoosterNames[(int)booster]}!");
             }, out boosterShopSubtitles[b]);
         }
-        ShopRow(list, Icon.Palette, "Kite Skins", "Patterns for your patang", "Open", null, false, ShowSkins, out _);
+        ShopRow(list, Icon.Palette, "Kite Skins", "Patterns for your kites", "Open", null, false, ShowSkins, out _);
     }
 
     Button ShopRow(Transform list, string icon, string title, string subtitle, string price, string buttonIcon, bool coins,
@@ -1189,11 +1272,12 @@ public partial class GameUI : MonoBehaviour
 
     void BuildToast()
     {
-        toast = Node("Toast", root).At(new Vector2(0.5f, 0f), new Vector2(0f, 330f), new Vector2(760f, 100f), new Vector2(0.5f, 0f));
+        toast = Node("Toast", root).At(new Vector2(0.5f, 0f), new Vector2(0f, 330f), new Vector2(960f, 130f), new Vector2(0.5f, 0f));
         toast.gameObject.AddComponent<CanvasGroup>().blocksRaycasts = false;
         Img(toast, "Bg", Art.Load("ui/button_secondary"), new Color(Art.Ink.r, Art.Ink.g, Art.Ink.b, 0.9f), sliced: true).rectTransform.Fill();
-        toastText = Label(toast, "", 40, Art.Cream, Art.Body);
-        toastText.rectTransform.Fill(20, 10, 20, 0);
+        toastText = Label(toast, "", 42, Art.Cream, Art.Body);
+        toastText.horizontalOverflow = HorizontalWrapMode.Wrap; // a long message wraps onto a second line
+        toastText.rectTransform.Fill(30, 10, 30, 6);
         toast.gameObject.SetActive(false);
     }
 
@@ -1210,7 +1294,7 @@ public partial class GameUI : MonoBehaviour
         toast.gameObject.SetActive(true);
         var group = toast.GetComponent<CanvasGroup>();
         yield return Fade(group, 0.15f);
-        yield return new WaitForSecondsRealtime(1.6f);
+        yield return new WaitForSecondsRealtime(2.0f);
         for (float t = 0; t < 0.3f; t += Time.unscaledDeltaTime)
         {
             group.alpha = 1f - t / 0.3f;
@@ -1250,6 +1334,7 @@ public partial class GameUI : MonoBehaviour
 
         shownState = TangleBoard.GameState.Playing;
         shownHearts = TangleBoard.MaxHearts;
+        board.GuideArrows = number <= 1;
         board.LoadLevel(task.Result);
         Progress.RecordStart();
         LevelCache.Prefetch(number + 1); // built while this one is played
